@@ -1,0 +1,41 @@
+{
+    "exp_name": "denoising_dncnn_exp_0_val",
+    "model_module": "dncnn",
+    "model_name": "DnCNN",
+    "mode": "validation",
+
+    "data_loader_module": "denoising",
+    "data_loader_name": "SynthesisDenoisingLoader",
+    "data_loader_workers": 8,
+
+    "training_std_noise": 0.1,
+    "validation_std_noise": 0.1,
+
+    "data_mode": "imgs",
+    "data_dir": "./data/DnCNN-Data",
+    "data_exts": ["*.png"],
+    "crop_size": 40,
+    "train_batch_size": 128,
+    "val_batch_size": 1,
+
+    "cuda": true,
+    "gpu_device": 0,
+    "seed": 12345,
+  
+    "input_channels": 1,
+    "n_features": 64,
+    "n_layers": 17,
+  
+    "learning_rate": 0.001,
+    "beta1": 0.5,
+    "beta2": 0.999,
+    "gamma": 0.1,
+    "schedule": [4000],
+  
+    "max_epoch": 5000,
+ 
+    "validate_every": 50,
+    "save_every": 50,
+
+    "resume": "experiments/denoising_dncnn_exp_final_0/checkpoints/model_best.pth"
+}
