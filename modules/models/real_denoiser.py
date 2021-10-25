@@ -19,9 +19,11 @@ class RealDenoiserBase(BaseModel):
     def __init__(self, args, device):
         super(RealDenoiserBase, self).__init__(args, device)
         
-        _, self.restoration_net, self.rec_criterion = build_components(self.args)
+        self.mask_net, self.restoration_net, self.rec_criterion = build_components(self.args)
 
-        self.optimizer = torch.optim.Adam(self.restoration_net.parameters(), lr=self.args.learning_rate, betas=(self.args.beta1, self.args.beta2))
+        params = list(self.mask_net.parameters()) + list(self.restoration_net.parameters())
+
+        self.optimizer = torch.optim.Adam(params, lr=self.args.learning_rate, betas=(self.args.beta1, self.args.beta2))
         
         self.current_iteration = 0
         self.current_epoch = 0
@@ -39,6 +41,7 @@ class RealDenoiserBase(BaseModel):
         self.current_epoch = checkpoint['epoch']
         self.current_iteration = checkpoint['iteration']
         self.restoration_net.load_state_dict(checkpoint['restoration_net_state_dict'])
+        self.mask_net.load_state_dict(checkpoint['mask_net_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.logger.info('Chekpoint loaded successfully from {} at epoch: {} and iteration: {}'.format(
             file_path, checkpoint['epoch'], checkpoint['iteration']))
@@ -52,6 +55,7 @@ class RealDenoiserBase(BaseModel):
             'epoch': self.current_epoch + 1, # because epoch is used for loading then this must be added + 1
             'iteration': self.current_iteration, 
             'restoration_net_state_dict': self.restoration_net.state_dict(),
+            'mask_net_state_dict': self.mask_net.state_dict(),
             'optimizer': self.optimizer.state_dict(),
         }
 
@@ -92,8 +96,15 @@ class RealDenoiserBase(BaseModel):
             self.optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
+            mask = self.mask_net(noisy)
 
-            loss = self.rec_criterion(out_clean, clean) + self.rec_criterion(noisy, noisy_rec)
+            mask = (mask > 0.5).float()
+            num_non_zero = torch.count_nonzero(mask)
+            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+
+            noisy_rec_loss = torch.sum((torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask))
+
+            loss = self.rec_criterion(out_clean, clean) + noisy_rec_loss
             loss.backward()
 
             self.optimizer.step()
@@ -139,6 +150,7 @@ class RealDenoiserBase(BaseModel):
                 clean = clean.to(self.device)
 
                 out_clean, _ = self.restoration_net(noisy)
+                mask = self.mask_net(noisy)
 
                 out_clean = torch.clamp(out_clean, 0., 1.)
                 clean = torch.clamp(clean, 0., 1.)
@@ -175,9 +187,13 @@ class RealDenoiserBase(BaseModel):
             noisy_saved_img = plot_samples_per_epoch(gen_batch=noisy.data, output_dir=os.path.join(self.args.output_dir, "noisy"), epoch=self.current_epoch)
             noisy_saved_img = noisy_saved_img.transpose((2, 0, 1))
 
+            mask_saved_img = plot_samples_per_epoch(gen_batch=mask.data, output_dir=os.path.join(self.args.output_dir, "mask"), epoch=self.current_epoch)
+            mask_saved_img = mask_saved_img.transpose((2, 0, 1))
+
             self.summary_writer.add_image('validation/out_img', out_saved_img, self.current_epoch)
             self.summary_writer.add_image('validation/clean_img', clean_saved_img, self.current_epoch)
             self.summary_writer.add_image('validation/noisy_img', noisy_saved_img, self.current_epoch)
+            self.summary_writer.add_image('validation/mask_img', mask_saved_img, self.current_epoch)
             
             self.logger.info('Evaluation after epoch-{} | Loss: {} | PSNR: {} | SSIM: {}'.format(
                 str(self.current_epoch),
@@ -298,6 +314,7 @@ class RealDenoiserBase(BaseModel):
         Path(os.path.join(self.args.output_dir, 'noisy')).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(self.args.output_dir, 'clean')).mkdir(parents=True, exist_ok=True)
         Path(os.path.join(self.args.output_dir, 'out')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(self.args.output_dir, 'mask')).mkdir(parents=True, exist_ok=True)
         self._reset_metric()
 
     def init_validation_logger(self):
@@ -332,6 +349,7 @@ class RealDenoiserBase(BaseModel):
         Move components to device
         """
         self.restoration_net = self.restoration_net.to(self.device)
+        self.mask_net = self.mask_net.to(self.device)
 
     def _reset_metric(self):
         """
@@ -345,4 +363,6 @@ class RealDenoiserBase(BaseModel):
         """
         Return the number of parameters for the model
         """
-        return sum(p.numel() for p in self.restoration_net.parameters() if p.requires_grad)
+        num_params_restoration = sum(p.numel() for p in self.restoration_net.parameters() if p.requires_grad)
+        num_params_mask = sum(p.numel() for p in self.mask_net.parameters() if p.requires_grad)
+        return num_params_restoration + num_params_mask

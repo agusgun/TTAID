@@ -11,7 +11,7 @@ def plot_samples_per_epoch(gen_batch, output_dir, epoch):
     fname = "samples_epoch_{:d}.png".format(epoch)
     fpath = os.path.join(output_dir, fname)
 
-    v_utils.save_image(gen_batch, fpath, nrow=4, padding=2, normalize=True)
+    v_utils.save_image(gen_batch, fpath, nrow=4, padding=2, normalize=True, value_range=(0, 1))
     return imageio.imread(fpath)
 
 def plot_val_samples(gen_batch, output_dir, fname):
@@ -20,7 +20,7 @@ def plot_val_samples(gen_batch, output_dir, fname):
     """
     fpath = os.path.join(output_dir, fname)
 
-    v_utils.save_image(gen_batch, fpath, nrow=4, padding=2, normalize=True)
+    v_utils.save_image(gen_batch, fpath, nrow=4, padding=2, normalize=True, value_range=(0, 1))
     return imageio.imread(fpath)
 
 def plot_image(img, output_dir, fname):
@@ -30,7 +30,7 @@ def plot_image(img, output_dir, fname):
 
     fpath = os.path.join(output_dir, fname)
 
-    v_utils.save_image(img, fpath)
+    v_utils.save_image(img, fpath, normalize=True, value_range=(0, 1))
     return imageio.imread(fpath)
 
 def stitch(net, input_tensor, n_patches=[4, 4], output_channels=3, mask=None, output_index=None):
