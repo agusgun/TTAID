@@ -202,9 +202,9 @@ class RealDenoiserBase(BaseModel):
                 clean = clean.to(self.device)
 
                 if self.args.stitch:
-                    out_clean = stitch(self.restoration_net, noisy, n_patches=self.args.stitch_n_patches)
+                    out_clean = stitch(self.restoration_net, noisy, n_patches=self.args.stitch_n_patches, output_index=0)
                 else:
-                    out_clean = self.restoration_net(noisy)
+                    out_clean, _ = self.restoration_net(noisy)
 
                 out_clean = torch.clamp(out_clean, 0., 1.)
                 clean = torch.clamp(clean, 0., 1.)
@@ -240,22 +240,54 @@ class RealDenoiserBase(BaseModel):
             tqdm_batch.close()
         else: # testing (no ground truth)
             tqdm_batch = tqdm(val_loader, desc='Testing using real data')
+
+            loss_meter = AverageMeter()
+            psnr_meter = AverageMeter()
+            ssim_meter = AverageMeter()
+
             for curr_it, data in enumerate(tqdm_batch):
                 noisy = data['noisy']
+                clean = data['clean']
 
                 noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
 
                 if self.args.stitch:
-                    # Batch size must be one
-                    out_clean = stitch(self.restoration_net, noisy, n_patches=self.args.stitch_n_patches)
+                    out_clean = stitch(self.restoration_net, noisy, n_patches=self.args.stitch_n_patches, output_index=0)
                 else:
-                    out_clean = self.restoration_net(noisy)
-                
-                out_clean = torch.clamp(out_clean, 0., 1.)
-                out_saved_img = plot_image(out_clean.data[0], output_dir=os.path.join(self.args.output_dir, "testing"), fname='{}.png'.format(curr_it))
-                out_saved_img = out_saved_img.transpose((2, 0, 1))
+                    out_clean, _ = self.restoration_net(noisy)
 
-                self.summary_writer.add_image('testing/out_img', out_saved_img, curr_it)
+                out_clean = torch.clamp(out_clean, 0., 1.)
+                clean = torch.clamp(clean, 0., 1.)
+                noisy = torch.clamp(noisy, 0., 1.)
+
+                out_saved_img = plot_image(out_clean.data[0], output_dir=os.path.join(self.args.output_dir, "out"), fname='{}.png'.format(curr_it))
+                noisy_saved_img = plot_image(noisy.data[0], output_dir=os.path.join(self.args.output_dir, "noisy"), fname='{}.png'.format(curr_it))
+                clean_saved_img = plot_image(clean.data[0], output_dir=os.path.join(self.args.output_dir, "clean"), fname='{}.png'.format(curr_it))
+                
+                psnr_val, bs = calculate_batch_psnr(clean, out_clean)
+                ssim_val, _ = calculate_batch_ssim(clean, out_clean)
+                
+                psnr_meter.update(psnr_val, bs)
+                ssim_meter.update(ssim_val, bs)
+                
+                tqdm_batch.set_description('({batch}/{size}) | PSNR: {psnr:.4f} | SSIM: {ssim:.4f}'.format(
+                    batch = curr_it + 1,
+                    size = len(val_loader),
+                    psnr = psnr_meter.val,
+                    ssim = ssim_meter.val
+                ))
+            
+            self.summary_writer.add_scalar("testing/loss", loss_meter.val, self.current_epoch)
+            self.summary_writer.add_scalar("testing/psnr", psnr_meter.val, self.current_epoch)
+            self.summary_writer.add_scalar("testing/ssim", ssim_meter.val, self.current_epoch)
+            
+            self.logger.info('Evaluation after epoch-{} | PSNR: {} | SSIM: {}'.format(
+                str(self.current_epoch),
+                str(psnr_meter.val),
+                str(ssim_meter.val)
+            ))
+
             tqdm_batch.close()
 
     def init_training_logger(self):
@@ -282,7 +314,9 @@ class RealDenoiserBase(BaseModel):
         Initialize testing logger specific for each model
         """
         self.summary_writer = SummaryWriter(log_dir=self.args.summary_dir, comment='RealDenoiser Base')
-        Path(os.path.join(self.args.output_dir, 'testing')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(self.args.output_dir, 'noisy')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(self.args.output_dir, 'clean')).mkdir(parents=True, exist_ok=True)
+        Path(os.path.join(self.args.output_dir, 'out')).mkdir(parents=True, exist_ok=True)
 
     def finalize_training(self):
         """

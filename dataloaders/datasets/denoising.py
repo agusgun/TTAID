@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import random
+import scipy.io
 import torchvision.transforms as v_transforms
 import torchvision.transforms.functional as F_t
 
@@ -10,6 +11,7 @@ from utils.transforms.task_specific.denoising import synthesize_noise
 from torch.utils.data import Dataset
 from PIL import Image
 from glob import glob
+from pathlib import Path
 
 class DIV2KSyntheticNoise(Dataset):
     def __init__(self, args, is_train=True, with_transform=True):
@@ -53,6 +55,46 @@ class DIV2KSyntheticNoise(Dataset):
             clean = clean_transform(clean)
         
         return {'noisy': noisy, 'clean': clean, 'img_path': img_path}
+
+
+class NAMRealNoise(Dataset):
+    def __init__(self, args, is_train=False, with_transform=False):
+        self.img_dir = args.data_dir
+        self.data_exts = args.data_exts
+        self.crop_size = args.crop_size
+        self.normalization = args.normalization
+
+        self.is_train = is_train
+        assert not(self.is_train), 'NAMRealNoise only support test dataset'
+
+        self.with_transform = with_transform
+
+        self.imgs_path = []
+        for ext in args.data_exts:
+            for path in Path(self.img_dir).rglob(ext):
+                self.imgs_path.append(path)
+    
+    def __len__(self):
+        return len(self.imgs_path)
+    
+    def __getitem__(self, idx):
+        img_path = self.imgs_path[idx]
+
+        mat = scipy.io.loadmat(img_path)
+
+        noisy = mat['img_noisy']
+        clean = mat['img_mean']
+
+        noisy = F_t.to_tensor(noisy)
+        clean = F_t.to_tensor(clean)
+
+        if self.with_transform:
+            transform = v_transforms.CenterCrop(self.crop_size)
+
+            noisy = transform(noisy)
+            clean = transform(clean)
+
+        return {'noisy': noisy, 'clean': clean, 'img_path': str(img_path)}
 
 
 if __name__ == "__main__":

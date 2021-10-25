@@ -36,12 +36,11 @@ class DIV2KSynthesisDegradationLoader:
             else:
                 self.train_loader = None
 
-                # TODO: using real noise dataset
-                # val_dataset = RealHeritageDataset(args)
-                # self.val_loader = DataLoader(
-                #     val_dataset, batch_size=args.val_batch_size, shuffle=False,
-                #     num_workers=args.data_loader_workers
-                # )
+                val_dataset = NAMRealNoise(args, is_train=False, with_transform=True)
+                self.val_loader = DataLoader(
+                    val_dataset, batch_size=args.val_batch_size, shuffle=False,
+                    num_workers=args.data_loader_workers
+                )
         elif args.data_mode == "numpy":
             raise NotImplementedError("This is not yet implemented")
         elif args.data_mode == "h5":
