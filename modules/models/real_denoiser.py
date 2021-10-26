@@ -81,6 +81,7 @@ class RealDenoiserBase(BaseModel):
         tqdm_batch = tqdm(train_loader, desc='epoch-{}'.format(self.current_epoch))
 
         self.restoration_net.train()
+        self.mask_net.train()
 
         end_time = time.time()
         for curr_it, data in enumerate(tqdm_batch):
@@ -124,9 +125,9 @@ class RealDenoiserBase(BaseModel):
                 bt = self.batch_time_meter.val,
                 loss = self.loss_meter.val
             ))
+        self.logger.info('Training at epoch-{} | LR: {} Loss: {}'.format(str(self.current_epoch), str(self.args.learning_rate), str(self.loss_meter.val)))
 
         tqdm_batch.close()
-        self.logger.info('Training at epoch-{} | LR: {} Loss: {}'.format(str(self.current_epoch), str(self.args.learning_rate), str(self.loss_meter.val)))
 
 
     @torch.no_grad()
@@ -135,6 +136,7 @@ class RealDenoiserBase(BaseModel):
         Validation step for each mini-batch
         """
         self.restoration_net.eval()
+        self.mask_net.eval()
         if self.args.mode == 'training':
             tqdm_batch = tqdm(val_loader, desc='Validation at epoch-{}'.format(self.current_epoch))
         
