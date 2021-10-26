@@ -11,7 +11,7 @@
     "data_mode": "imgs",
     "data_dir": "./data/DIV2K",
     "data_exts": ["*.jpg", "*.png", "*.tif"],
-    "crop_size": 256,
+    "crop_size": 128,
     "train_batch_size": 16,
     "val_batch_size": 1,
     "stitch": false,

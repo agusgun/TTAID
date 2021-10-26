@@ -4,6 +4,8 @@ import shutil
 import time
 import torch
 
+
+from collections import OrderedDict
 from modules.models.base import BaseModel
 from modules.components import build_components
 
@@ -21,9 +23,8 @@ class RealDenoiserBase(BaseModel):
         
         self.mask_net, self.restoration_net, self.rec_criterion = build_components(self.args)
 
-        params = list(self.mask_net.parameters()) + list(self.restoration_net.parameters())
-
-        self.optimizer = torch.optim.Adam(params, lr=self.args.learning_rate, betas=(self.args.beta1, self.args.beta2))
+        self.mask_optimizer = torch.optim.Adam(self.mask_net.parameters(), lr=args.learning_rate, betas=(args.beta1, args.beta2))
+        self.restoration_optimizer = torch.optim.Adam(self.restoration_net.parameters(), lr=args.learning_rate, betas=(args.beta1, args.beta2))
         
         self.current_iteration = 0
         self.current_epoch = 0
@@ -42,7 +43,8 @@ class RealDenoiserBase(BaseModel):
         self.current_iteration = checkpoint['iteration']
         self.restoration_net.load_state_dict(checkpoint['restoration_net_state_dict'])
         self.mask_net.load_state_dict(checkpoint['mask_net_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        self.mask_optimizer.load_state_dict(checkpoint['mask_optimizer'])
+        self.restoration_optimizer.load_state_dict(checkpoint['restoration_optimizer'])
         self.logger.info('Chekpoint loaded successfully from {} at epoch: {} and iteration: {}'.format(
             file_path, checkpoint['epoch'], checkpoint['iteration']))
         return self.current_epoch
@@ -56,7 +58,8 @@ class RealDenoiserBase(BaseModel):
             'iteration': self.current_iteration, 
             'restoration_net_state_dict': self.restoration_net.state_dict(),
             'mask_net_state_dict': self.mask_net.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
+            'mask_optimizer': self.mask_optimizer.state_dict(),
+            'restoration_optimizer': self.restoration_optimizer.state_dict(),
         }
 
         torch.save(state, os.path.join(self.args.checkpoint_dir, file_name))
@@ -78,7 +81,7 @@ class RealDenoiserBase(BaseModel):
         self.current_epoch = epoch
         self._reset_metric()
 
-        tqdm_batch = tqdm(train_loader, desc='epoch-{}'.format(self.current_epoch))
+        tqdm_batch = tqdm(train_loader, desc='epoch-{} conventional training'.format(self.current_epoch))
 
         self.restoration_net.train()
         self.mask_net.train()
@@ -93,8 +96,8 @@ class RealDenoiserBase(BaseModel):
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
 
-            self.restoration_net.zero_grad()
-            self.optimizer.zero_grad()
+            self.restoration_optimizer.zero_grad()
+            self.mask_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
             mask = self.mask_net(noisy)
@@ -104,29 +107,98 @@ class RealDenoiserBase(BaseModel):
             num_zero = mask.size()[0] * 256 * 256 - num_non_zero
 
             noisy_rec_loss = torch.sum((torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask))
-
-            loss = self.rec_criterion(out_clean, clean) + noisy_rec_loss
+            clean_loss = self.rec_criterion(out_clean, clean) 
+            loss = clean_loss + noisy_rec_loss
             loss.backward()
 
-            self.optimizer.step()
+            self.restoration_optimizer.step()
 
-            self.loss_meter.update(loss.item())
+            self.clean_loss_meter.update(clean_loss.item())
+            self.noisy_loss_meter.update(noisy_rec_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
             end_time = time.time()
 
-            self.summary_writer.add_scalar("epoch/loss", self.loss_meter.val, self.current_iteration)
+            self.summary_writer.add_scalar("epoch/conventional/loss_clean", self.clean_loss_meter.val, self.current_iteration)
+            self.summary_writer.add_scalar("epoch/conventional/loss_noisy", self.noisy_loss_meter.val, self.current_iteration)
 
-            tqdm_batch.set_description('({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Loss: {loss:.4f}'.format(
+            tqdm_batch.set_description('ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}'.format(
                 batch = curr_it + 1,
                 size = len(train_loader),
                 data = self.data_time_meter.val,
                 bt = self.batch_time_meter.val,
-                loss = self.loss_meter.val
+                lossC = self.clean_loss_meter.val,
+                lossN = self.noisy_loss_meter.val
             ))
-        self.logger.info('Training at epoch-{} | LR: {} Loss: {}'.format(str(self.current_epoch), str(self.args.learning_rate), str(self.loss_meter.val)))
+        self.logger.info('Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}'.
+                        format(str(self.current_epoch), str(self.args.learning_rate), str(self.clean_loss_meter.val), str(self.noisy_loss_meter.val)))
+        tqdm_batch.close()
 
+        tqdm_batch = tqdm(train_loader, desc='epoch-{} meta-training'.format(self.current_epoch))
+
+        end_time = time.time()
+        for curr_it, data in enumerate(tqdm_batch):
+            self.data_time_meter.update(time.time() - end_time)
+
+            noisy = data['noisy']
+            clean = data['clean']
+
+            noisy = noisy.to(self.device)
+            clean = clean.to(self.device)
+
+            self.restoration_optimizer.zero_grad()
+            self.mask_optimizer.zero_grad()
+
+            out_clean, noisy_rec = self.restoration_net(noisy)
+            mask = self.mask_net(noisy)
+
+            mask = (mask > 0.5).float()
+            num_non_zero = torch.count_nonzero(mask)
+            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+
+            noisy_rec_loss = torch.sum((torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask))
+            clean_loss = self.rec_criterion(out_clean, clean) 
+            loss = clean_loss + noisy_rec_loss
+
+            # current theta_1
+            theta1_weights = OrderedDict((name, param) for (name, param) in self.restoration_net.named_parameters())
+
+            # second derivative
+            grads = torch.autograd.grad(loss, self.restoration_net.parameters(), create_graph=True)
+            params_data = [p.data for p in list(self.restoration_net.parameters())]
+
+            # theta_1+
+            alpha = self.args.learning_rate
+            theta1_weights = OrderedDict((name, param - alpha * grad) for ((name, param), grad, data) in zip(theta1_weights.items(), grads, params_data))
+
+            # compute primary loss
+            out_clean, noisy_rec = self.restoration_net(noisy)
+            clean_loss = self.rec_criterion(out_clean, clean)
+
+            clean_loss.backward() # add entropy loss here if want
+            self.mask_optimizer.step()
+
+            self.clean_loss_meter.update(clean_loss.item())
+            self.noisy_loss_meter.update(noisy_rec_loss.item())
+
+            self.current_iteration += 1
+            self.batch_time_meter.update(time.time() - end_time)
+            end_time = time.time()
+
+            self.summary_writer.add_scalar("epoch/meta-training/clean_loss", self.clean_loss_meter.val, self.current_iteration)
+            self.summary_writer.add_scalar("epoch/meta-training/noisy_loss", self.noisy_loss_meter.val, self.current_iteration)
+
+            tqdm_batch.set_description('Meta-training ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}'.format(
+                batch = curr_it + 1,
+                size = len(train_loader),
+                data = self.data_time_meter.val,
+                bt = self.batch_time_meter.val,
+                lossC = self.clean_loss_meter.val,
+                lossN = self.noisy_loss_meter.val
+            ))
+        self.logger.info('Meta-training: Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}'.
+                        format(str(self.current_epoch), str(self.args.learning_rate), str(self.clean_loss_meter.val), str(self.noisy_loss_meter.val)))
         tqdm_batch.close()
 
 
@@ -359,7 +431,8 @@ class RealDenoiserBase(BaseModel):
         """
         self.batch_time_meter = AverageMeter()
         self.data_time_meter = AverageMeter()
-        self.loss_meter = AverageMeter()
+        self.clean_loss_meter = AverageMeter()
+        self.noisy_loss_meter = AverageMeter()
 
     def count_parameters(self):
         """
