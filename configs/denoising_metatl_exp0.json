@@ -6,7 +6,7 @@
     "data_loader_module": "denoising",
     "data_loader_name": [
         "PolyDatasetLoader",
-        "PolyDatasetLoader"
+        "SIDDDatasetLoader"
     ],
     "data_loader_workers": 1,
     "data_mode": "imgs",
@@ -15,10 +15,12 @@
         "./data/PolyU-Real-World-Noisy-Images-Dataset/CroppedImages",
         "./data/PolyU-Real-World-Noisy-Images-Dataset/CroppedImages"
     ],
+    "data_dir_sidd": "./data/SIDD_Small_sRGB_Only",
     "data_exts": [
         "*.jpg",
         "*.png",
-        "*.tif"
+        "*.tif",
+        "*.PNG"
     ],
     "crop_size": 128,
     "train_batch_size": 1,

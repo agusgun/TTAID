@@ -151,9 +151,9 @@ class PolyRealNoise(Dataset):
         }
 
 
-class SSIDRealNoise(Dataset):
+class SIDDRealNoise(Dataset):
     def __init__(self, args, is_train=True, with_transform=True):
-        self.img_dir = args.data_dir
+        self.img_dir = args.data_dir_sidd
         self.data_exts = args.data_exts
         self.crop_size = args.crop_size
         self.normalization = args.normalization
@@ -161,42 +161,24 @@ class SSIDRealNoise(Dataset):
         self.is_train = is_train
         self.with_transform = with_transform
 
-        if self.is_train:
-            self.img_dir = os.path.join(self.img_dir, "train")
-        else:
-            self.img_dir = os.path.join(self.img_dir, "valid")
-
-        self.imgs_path = []
-        for ext in args.data_exts:
-            self.imgs_path.extend(glob(os.path.join(self.img_dir, ext)))
+        self.imgs_path = list(open(self.img_dir + "/Scene_Instances.txt", "r"))
+        self.imgs_path = [
+            os.path.join(self.img_dir, "Data", i.strip("\n")) for i in self.imgs_path
+        ]
 
     def __len__(self):
         return len(self.imgs_path)
 
     def __getitem__(self, idx):
         img_path = self.imgs_path[idx]
+        img_path_clean = glob(os.path.join(img_path, "GT*"))[0]
+        img_path_noisy = glob(os.path.join(img_path, "NOISY*"))[0]
 
-        clean = Image.open(img_path).convert("RGB")
+        clean = Image.open(img_path_clean).convert("RGB")
         clean = F_t.to_tensor(clean)
 
-        noisy = clean.clone()
-        noisy = synthesize_noise(noisy)
-
-        if self.with_transform:
-            transform_params = get_transform_params(noisy.size(), self.crop_size)
-            noisy_transform = get_transform(
-                transform_params,
-                is_train=self.is_train,
-                normalization=self.normalization,
-            )
-            clean_transform = get_transform(
-                transform_params,
-                is_train=self.is_train,
-                normalization=self.normalization,
-            )
-
-            noisy = noisy_transform(noisy)
-            clean = clean_transform(clean)
+        noisy = Image.open(img_path_noisy).convert("RGB")
+        noisy = F_t.to_tensor(noisy)
 
         return {"noisy": noisy, "clean": clean, "img_path": img_path}
 
