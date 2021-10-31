@@ -705,17 +705,6 @@ class RealDenoiserMetaTransfer(BaseModel):
         """
         self.current_epoch = epoch
         self._reset_metric()
-
-        tqdm_batch_d1 = tqdm(
-            train_loaders[0],
-            desc="epoch-{} conventional training".format(self.current_epoch),
-        )
-
-        tqdm_batch_d2 = tqdm(
-            train_loaders[1],
-            desc="epoch-{} conventional training".format(self.current_epoch),
-        )
-
         self.restoration_net.train()
         self.mask_net.train()
 
@@ -731,53 +720,59 @@ class RealDenoiserMetaTransfer(BaseModel):
 
         # Run inner loop
         # for curr_dt, tqdm_batch in enumerate([tqdm_batch_d1, tqdm_batch_d2]):
-        for curr_dt, tqdm_batch in enumerate([tqdm_batch_d1, tqdm_batch_d2]):
-            # for curr_it, data in enumerate(tqdm_batch):
-            data = next(iter(tqdm_batch))
-            self.data_time_meter.update(time.time() - end_time)
-            noisy = data["noisy"]
-            clean = data["clean"]
-
-            noisy = noisy.to(self.device)
-            clean = clean.to(self.device)
-
-            # Predict clean and noisy image
-            out_clean, noisy_rec = self.restoration_net(noisy)
-
-            # Generate mask
-            mask = self.mask_net(noisy)
-            mask = (mask > 0.5).float()
-            num_non_zero = torch.count_nonzero(mask)
-            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
-
-            # Compute auxiliary loss
-            noisy_rec_loss = torch.sum(
-                (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
+        for curr_dt, train_loader in enumerate([train_loaders[0], train_loaders[1]]):
+            tqdm_batch = tqdm(
+                train_loader,
+                desc="database-{0} training, epoch: {1}, inner loop".format(
+                    curr_dt, epoch
+                ),
             )
+            for curr_it, data in enumerate(tqdm_batch):
+                self.data_time_meter.update(time.time() - end_time)
+                noisy = data["noisy"]
+                clean = data["clean"]
 
-            loss = noisy_rec_loss
-            # current theta_1
-            theta1_weights = OrderedDict(
-                (name, param)
-                for (name, param) in self.restoration_net.named_parameters()
-            )
+                noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
 
-            # second derivative
-            grads = torch.autograd.grad(
-                loss, self.restoration_net.parameters(), create_graph=True
-            )
-            params_data = [p.data for p in list(self.restoration_net.parameters())]
+                # Predict clean and noisy image
+                out_clean, noisy_rec = self.restoration_net(noisy)
 
-            # theta_1+
-            alpha = self.args.learning_rate
-            theta1_weights = OrderedDict(
-                (name, param - alpha * grad)
-                for ((name, param), grad, data) in zip(
-                    theta1_weights.items(), grads, params_data
+                # Generate mask
+                mask = self.mask_net(noisy)
+                mask = (mask > 0.5).float()
+                num_non_zero = torch.count_nonzero(mask)
+                num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+
+                # Compute auxiliary loss
+                noisy_rec_loss = torch.sum(
+                    (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
                 )
-            )
 
-            loss = noisy_rec_loss
+                loss = noisy_rec_loss
+                # current theta_1
+                theta1_weights = OrderedDict(
+                    (name, param)
+                    for (name, param) in self.restoration_net.named_parameters()
+                )
+
+                # second derivative
+                grads = torch.autograd.grad(
+                    loss, self.restoration_net.parameters(), create_graph=True
+                )
+                params_data = [p.data for p in list(self.restoration_net.parameters())]
+
+                # theta_1+
+                alpha = self.args.learning_rate
+                theta1_weights = OrderedDict(
+                    (name, param - alpha * grad)
+                    for ((name, param), grad, data) in zip(
+                        theta1_weights.items(), grads, params_data
+                    )
+                )
+
+                loss = noisy_rec_loss
+            tqdm_batch.close()
 
         # End of inner loop
 
@@ -786,28 +781,32 @@ class RealDenoiserMetaTransfer(BaseModel):
             param.require_grad = True
 
         # iterate over sample
-        for curr_dt, tqdm_batch in enumerate([tqdm_batch_d1, tqdm_batch_d2]):
-            # for curr_it, data in enumerate(tqdm_batch):
-            data = next(iter(tqdm_batch))
+        for curr_dt, train_loader in enumerate([train_loaders[0], train_loaders[1]]):
+            tqdm_batch = tqdm(
+                train_loader,
+                desc="database-{0}, epoch{1}, outer loop training".format(
+                    curr_dt, epoch
+                ),
+            )
+            for curr_it, data in enumerate(tqdm_batch):
+                self.data_time_meter.update(time.time() - end_time)
 
-            self.data_time_meter.update(time.time() - end_time)
+                noisy = data["noisy"]
+                clean = data["clean"]
 
-            noisy = data["noisy"]
-            clean = data["clean"]
+                noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
 
-            noisy = noisy.to(self.device)
-            clean = clean.to(self.device)
+                self.restoration_optimizer.zero_grad()
+                self.mask_optimizer.zero_grad()
 
-            self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
+                # Predict clean and noisy image
+                out_clean, noisy_rec = self.restoration_net(noisy)
 
-            # Predict clean and noisy image
-            out_clean, noisy_rec = self.restoration_net(noisy)
-
-            # compute primary loss
-            out_clean, noisy_rec = self.restoration_net(noisy)
-            clean_loss = self.rec_criterion(out_clean, clean)
-            clean_loss.backward()  # add entropy loss here if want
+                # compute primary loss
+                out_clean, noisy_rec = self.restoration_net(noisy)
+                clean_loss = self.rec_criterion(out_clean, clean)
+                clean_loss.backward()  # add entropy loss here if want
 
         self.restoration_optimizer.step()
         self.mask_optimizer.step()
