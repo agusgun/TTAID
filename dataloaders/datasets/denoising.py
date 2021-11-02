@@ -182,6 +182,77 @@ class SIDDRealNoise(Dataset):
 
         return {"noisy": noisy, "clean": clean, "img_path": img_path}
 
+class RealNoiseTrainingDataset(Dataset):
+    def __init__(self, args, is_train=True, with_transform=True):
+        self.data_exts = args.data_exts
+        self.crop_size = args.crop_size
+        self.normalization = args.normalization
+
+        self.is_train = is_train
+        self.with_transform = with_transform
+
+        # Poly
+        self.img_dir_poly = args.data_dir_poly
+        self.imgs_path_poly = []
+        for ext in args.data_exts:
+            self.imgs_path_poly.extend(glob(os.path.join(self.img_dir_poly, ext)))
+
+        self.path_types = {}
+        self.imgs_path_poly = list(
+            set(["_".join(i.split("_")[:-1]) for i in self.imgs_path_poly])
+        )
+        for path in self.imgs_path_poly:
+            self.path_types[path] = 'poly'
+
+        # SIDD
+        self.img_dir_sidd = args.data_dir_sidd
+        self.imgs_path_sidd = list(open(self.img_dir_sidd + "/Scene_Instances.txt", "r"))
+        self.imgs_path_sidd = [
+            os.path.join(self.img_dir_sidd, "Data", i.strip("\n")) for i in self.imgs_path_sidd
+        ]
+        for path in self.imgs_path_sidd:
+            self.path_types[path] = 'sidd'
+        self.imgs_path = self.imgs_path_poly + self.imgs_path_sidd
+        random.shuffle(self.imgs_path)
+
+    def __len__(self):
+        return len(self.imgs_path)
+
+    def __getitem__(self, idx):
+        img_path = self.imgs_path[idx]
+
+        img_clean_path = None
+        img_noisy_path = None
+        if self.path_types[img_path] == "poly":
+            img_clean_path = img_path + "_mean.JPG"
+            img_noisy_path = img_path + "_real.JPG"
+        else:
+            img_clean_path = glob(os.path.join(img_path, "GT*"))[0]
+            img_noisy_path = glob(os.path.join(img_path, "NOISY*"))[0]
+
+        clean = Image.open(img_clean_path).convert("RGB")
+        clean = F_t.to_tensor(clean)
+        noisy = Image.open(img_noisy_path).convert("RGB")
+        noisy = F_t.to_tensor(noisy)
+
+        if self.with_transform:
+            transform_params = get_transform_params(noisy.size(), self.crop_size)
+            noisy_transform = get_transform(
+                transform_params,
+                is_train=self.is_train,
+                normalization=self.normalization,
+            )
+            clean_transform = get_transform(
+                transform_params,
+                is_train=self.is_train,
+                normalization=self.normalization,
+            )
+
+            noisy = noisy_transform(noisy)
+            clean = clean_transform(clean)
+
+        return {"noisy": noisy, "clean": clean, "img_path": img_path}
+
 
 if __name__ == "__main__":
     from utils.config import parse_json
