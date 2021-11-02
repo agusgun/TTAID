@@ -5,6 +5,7 @@ import time
 import torch
 
 
+from copy import deepcopy
 from collections import OrderedDict
 from modules.models.base import BaseModel
 from modules.components import build_components
@@ -634,12 +635,12 @@ class RealDenoiserMetaTransfer(BaseModel):
             self.args
         )
 
-        self.mask_optimizer = torch.optim.Adam(
+        self.mask_optimizer = torch.optim.Adam( # Optim for Mask Net
             self.mask_net.parameters(),
             lr=args.learning_rate,
             betas=(args.beta1, args.beta2),
         )
-        self.restoration_optimizer = torch.optim.Adam(
+        self.restoration_optimizer = torch.optim.Adam( # Meta Optim
             self.restoration_net.parameters(),
             lr=args.learning_rate,
             betas=(args.beta1, args.beta2),
@@ -651,6 +652,48 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.move_components_to_device(args.mode)
 
         self.logger = logging.getLogger("RealDenoiserBase Model")
+
+        # Meta Learning
+        self.num_inner_loop = 5 # TODO: inner_lr / outer_lr
+        self.inner_lr = args.learning_rate
+
+        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
+        for name, param in self.restoration_net.named_parameters():
+            print(name)
+        self.weight_len = len(self.weight_name)
+        self._initialize_parameters() # TODO: use MAXL model
+
+    def _add_default_weights(self, weights): # initialize
+        for i, name in enumerate(self.weight_for_default_names):
+            weights[name] = self.weight_for_default[i]
+        return weights
+
+    def _free_state(self): # initialize
+        self.updated_state_dict = OrderedDict()
+        self.updated_state_dict = self._add_default_weights(self.updated_state_dict)
+
+    def _initialize_parameters(self): # initialize
+        self._store_state()
+        self.weight_for_default = torch.nn.ParameterList([])
+        self.weight_for_default_names = []
+        for name, value in self.keep_weight.items():
+            if not name in self.weight_name:
+                self.weight_for_default_names.append(name)
+                self.weight_for_default.append(
+                    torch.nn.Parameter(value.to(dtype=torch.float))
+                )
+        self._free_state()
+
+    def _store_state(self): # initialize + inner loop
+        self.keep_weight = deepcopy(self.restoration_net.state_dict())
+
+    def _load_weights(self): # inner loop
+        tmp = deepcopy(self.restoration_net.state_dict())
+        weights = []
+        for name, value in tmp.items():
+            if name in self.weight_name:
+                weights.append(value)
+        return weights
 
     def load_checkpoint(self, file_path):
         """
@@ -712,106 +755,95 @@ class RealDenoiserMetaTransfer(BaseModel):
 
         self.restoration_optimizer.zero_grad()
         self.mask_optimizer.zero_grad()
-        # Freeze network body
-        for name, param in self.restoration_net.named_parameters():
-            if "head" in name:
-                break
-            param.require_grad = False
 
-        # Run inner loop
-        # for curr_dt, tqdm_batch in enumerate([tqdm_batch_d1, tqdm_batch_d2]):
-        for curr_dt, train_loader in enumerate([train_loaders[0], train_loaders[1]]):
+        for curr_dt, train_loader in enumerate(train_loaders):
             tqdm_batch = tqdm(
                 train_loader,
-                desc="database-{0} training, epoch: {1}, inner loop".format(
+                desc="database-{0} training, epoch: {1}".format(
                     curr_dt, epoch
                 ),
             )
+            query_loader = iter(train_loader)
+
             for curr_it, data in enumerate(tqdm_batch):
                 self.data_time_meter.update(time.time() - end_time)
-                noisy = data["noisy"]
-                clean = data["clean"]
 
-                noisy = noisy.to(self.device)
-                clean = clean.to(self.device)
+                # Freeze network body
+                for name, param in self.restoration_net.named_parameters():
+                    if "head" in name:
+                        break
+                    param.require_grad = False
+                
+                # Start TODO: random samples
+                noisy_support = data["noisy"].to(self.device)
+                clean_support = data["clean"].to(self.device)
+                
+                query = next(query_loader)
+                noisy_query = query["noisy"].to(self.device)
+                clean_query = query["clean"].to(self.device)
 
-                # Predict clean and noisy image
-                out_clean, noisy_rec = self.restoration_net(noisy)
+                outer_loss = 0
+                print(query["img_path"])
+                ### Inner Loop Start TODO: per sample maybe
+                for iter_loop in range(self.num_inner_loop):
+                    if iter_loop > 0:
+                        self.restoration_net.load_state_dict(self.updated_state_dict)
+                    ## Adapted Parameter
+                    weights_for_autograd = self._load_weights()[:5] # only prim head
 
-                # Generate mask
-                mask = self.mask_net(noisy)
-                mask = (mask > 0.5).float()
-                num_non_zero = torch.count_nonzero(mask)
-                num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+                    _, noisy_rec = self.restoration_net(noisy_support)
 
-                # Compute auxiliary loss
-                noisy_rec_loss = torch.sum(
-                    (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
-                )
+                    mask = self.mask_net(noisy_support)
+                    mask = (mask > 0.5).float()
+                    num_non_zero = torch.count_nonzero(mask)
+                    num_zero = mask.size()[0] * 256 * 256 - num_non_zero
 
-                loss = noisy_rec_loss
-                # current theta_1
-                theta1_weights = OrderedDict(
-                    (name, param)
-                    for (name, param) in self.restoration_net.named_parameters()
-                )
-
-                # second derivative
-                grads = torch.autograd.grad(
-                    loss, self.restoration_net.parameters(), create_graph=True
-                )
-                params_data = [p.data for p in list(self.restoration_net.parameters())]
-
-                # theta_1+
-                alpha = self.args.learning_rate
-                theta1_weights = OrderedDict(
-                    (name, param - alpha * grad)
-                    for ((name, param), grad, data) in zip(
-                        theta1_weights.items(), grads, params_data
+                    noisy_rec_loss = torch.sum(
+                        (torch.abs((noisy_rec - noisy_support) * mask)) / torch.sum(mask)
                     )
-                )
 
-                loss = noisy_rec_loss
-            tqdm_batch.close()
+                    loss_for_inner_update = noisy_rec_loss
 
-        # End of inner loop
+                    grad = torch.autograd.grad(
+                        loss_for_inner_update,
+                        list(self.restoration_net.parameters())[-9:-4],
+                        create_graph=True
+                    )
+                    for w_idx in range(self.weight_len - 4):
+                        self.updated_state_dict[self.weight_name[w_idx]] = weights_for_autograd[w_idx] - self.inner_lr * grad[w_idx]
+                    
+                    ## Auxiliary Head Update
+                    for name, param in self.restoration_net.primary_head.named_parameters():
+                        param.requires_grad = False
 
-        # Unfreeze all network
-        for name, param in self.restoration_net.named_parameters():
-            param.require_grad = True
+                    self.restoration_optimizer.zero_grad()
+                    loss_for_inner_update.backward()
+                    self.restoration_optimizer.step()
 
-        # iterate over sample
-        for curr_dt, train_loader in enumerate([train_loaders[0], train_loaders[1]]):
-            tqdm_batch = tqdm(
-                train_loader,
-                desc="database-{0}, epoch{1}, outer loop training".format(
-                    curr_dt, epoch
-                ),
-            )
-            for curr_it, data in enumerate(tqdm_batch):
-                self.data_time_meter.update(time.time() - end_time)
+                    for w_idx in range(self.weight_len - 4, self.weight_len):
+                        self.updated_state_dict[self.weight_name[w_idx]] = self.restoration_net.state_dict()[self.weight_name[w_idx]]
 
-                noisy = data["noisy"]
-                clean = data["clean"]
+                    for name, param in self.restoration_net.primary_head.named_parameters():
+                        param.requires_grad = True
 
-                noisy = noisy.to(self.device)
-                clean = clean.to(self.device)
+                self.restoration_net.load_state_dict(self.updated_state_dict)
+                self.restoration_net.load_state_dict(self.keep_weight)
+                query_clean, _ = self.restoration_net(noisy_query)
 
+                ### Inner Loop End
+                outer_loss = self.rec_criterion(query_clean, clean_query)
+
+                ### Outer Loop Start
+                for name, param in self.restoration_net.named_parameters():
+                    param.require_grad = True
+                outer_loss = outer_loss
                 self.restoration_optimizer.zero_grad()
                 self.mask_optimizer.zero_grad()
-
-                # Predict clean and noisy image
-                out_clean, noisy_rec = self.restoration_net(noisy)
-
-                # compute primary loss
-                out_clean, noisy_rec = self.restoration_net(noisy)
-                clean_loss = self.rec_criterion(out_clean, clean)
-                clean_loss.backward()  # add entropy loss here if want
-
-        self.restoration_optimizer.step()
-        self.mask_optimizer.step()
-
-        # End of outer loop
+                outer_loss.backward()
+                self.restoration_optimizer.step()
+                self.mask_optimizer.step()
+                self._store_state()
+                ### Outer Loop End
 
         tqdm_batch.close()
 

@@ -38,12 +38,10 @@ class Trainer(object):
         self.best_performance = 0
         for epoch in range(self.start_epoch, self.end_epoch):
             if self.args.meta_transfer == 1:
-                self.model.train_one_epoch(self.train_loader, epoch)
+                self.model.train_one_epoch(self.train_loader, epoch) # TODO: delete later
             else:
                 self.model.train_one_epoch(self.train_loader, epoch)
             self.model.adjust_learning_rate(epoch)
-
-            continue
 
             if ((epoch + 1) % self.args.validate_every) == 0:
                 performance = self.validate()
