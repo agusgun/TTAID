@@ -134,6 +134,7 @@ class RealDenoiserBase(BaseModel):
             loss.backward()
 
             self.restoration_optimizer.step()
+            self.mask_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
             self.noisy_loss_meter.update(noisy_rec_loss.item())
