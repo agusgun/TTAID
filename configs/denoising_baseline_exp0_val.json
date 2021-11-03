@@ -37,6 +37,7 @@
  
     "validate_every": 1,
     "save_every": 1,
+    "meta_transfer": 0,
 
     "resume": "experiments/baseline/checkpoints/model_149.pth"
 }
