@@ -225,7 +225,7 @@ class RealDenoiserBase(BaseModel):
             )
 
             # compute primary loss
-            out_clean, noisy_rec = self.restoration_net(noisy)
+            out_clean, noisy_rec = self.restoration_net(noisy, theta1_weights)
             clean_loss = self.rec_criterion(out_clean, clean)
 
             clean_loss.backward()  # add entropy loss here if want

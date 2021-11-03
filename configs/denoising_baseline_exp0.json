@@ -36,5 +36,6 @@
     "max_epoch": 150,
  
     "validate_every": 1,
-    "save_every": 1
+    "save_every": 1,
+    "meta_transfer": 0
 }
