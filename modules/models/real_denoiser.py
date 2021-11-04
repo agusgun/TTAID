@@ -104,7 +104,6 @@ class RealDenoiserBase(BaseModel):
         )
 
         self.restoration_net.train()
-        self.mask_net.train()
 
         end_time = time.time()
         for curr_it, data in enumerate(tqdm_batch):
@@ -117,24 +116,15 @@ class RealDenoiserBase(BaseModel):
             clean = clean.to(self.device)
 
             self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
-            mask = self.mask_net(noisy)
 
-            mask = (mask > 0.5).float()
-            num_non_zero = torch.count_nonzero(mask)
-            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
-
-            noisy_rec_loss = torch.sum(
-                (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
-            )
+            noisy_rec_loss = self.rec_criterion(noisy_rec, noisy)
             clean_loss = self.rec_criterion(out_clean, clean)
             loss = clean_loss + noisy_rec_loss
             loss.backward()
 
             self.restoration_optimizer.step()
-            self.mask_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
             self.noisy_loss_meter.update(noisy_rec_loss.item())
