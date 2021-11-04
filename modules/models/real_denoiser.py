@@ -117,7 +117,6 @@ class RealDenoiserBase(BaseModel):
             clean = clean.to(self.device)
 
             self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
             mask = self.mask_net(noisy)
@@ -188,7 +187,6 @@ class RealDenoiserBase(BaseModel):
             clean = clean.to(self.device)
 
             self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
             mask = self.mask_net(noisy)
@@ -228,6 +226,8 @@ class RealDenoiserBase(BaseModel):
             out_clean, noisy_rec = self.restoration_net(noisy, theta1_weights)
             clean_loss = self.rec_criterion(out_clean, clean)
 
+
+            self.mask_optimizer.zero_grad()
             clean_loss.backward()  # add entropy loss here if want
             self.mask_optimizer.step()
 
@@ -655,11 +655,10 @@ class RealDenoiserMetaTransfer(BaseModel):
 
         # Meta Learning
         self.num_inner_loop = 5 # TODO: inner_lr / outer_lr
-        self.inner_lr = args.learning_rate
+        self.inner_lr = args.learning_rate / 4 # 0.00001 works previously
 
-        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
+        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'primary_head' in name]
         self.weight_len = len(self.weight_name)
-        self._initialize_parameters() 
         torch.autograd.set_detect_anomaly(True)
 
     def _load_pretrained_model(self, pretrained_path):
@@ -668,38 +667,6 @@ class RealDenoiserMetaTransfer(BaseModel):
             self.restoration_net.load_state_dict(checkpoint["restoration_net_state_dict"])
             self.mask_net.load_state_dict(checkpoint["mask_net_state_dict"])
             self.logger.info("Succesfully loaded from {}".format(pretrained_path))
-
-    def _add_default_weights(self, weights): # initialize
-        for i, name in enumerate(self.weight_for_default_names):
-            weights[name] = self.weight_for_default[i]
-        return weights
-
-    def _free_state(self): # initialize
-        self.updated_state_dict = OrderedDict()
-        self.updated_state_dict = self._add_default_weights(self.updated_state_dict)
-
-    def _initialize_parameters(self): # initialize
-        self._store_state()
-        self.weight_for_default = torch.nn.ParameterList([])
-        self.weight_for_default_names = []
-        for name, value in self.keep_weight.items():
-            if not name in self.weight_name:
-                self.weight_for_default_names.append(name)
-                self.weight_for_default.append(
-                    torch.nn.Parameter(value.to(dtype=torch.float))
-                )
-        self._free_state()
-
-    def _store_state(self): # initialize + inner loop
-        self.keep_weight = deepcopy(self.restoration_net.state_dict())
-
-    def _load_weights(self): # inner loop
-        tmp = deepcopy(self.restoration_net.state_dict())
-        weights = []
-        for name, value in tmp.items():
-            if name in self.weight_name:
-                weights.append(value)
-        return weights
 
     def load_checkpoint(self, file_path):
         """
@@ -780,17 +747,40 @@ class RealDenoiserMetaTransfer(BaseModel):
                     break
                 param.require_grad = False
 
-            outer_loss = 0
-            ### Inner Loop Start Per Sample
             for iter_batch in range(noisy_data.size()[0]):
                 noisy, clean = noisy_data[iter_batch].unsqueeze(0), clean_data[iter_batch].unsqueeze(0)
 
+                outer_loss = 0
+                ### Inner Loop Start Per Sample
                 for iter_loop in range(self.num_inner_loop):
-                    if iter_loop > 0:
-                        self.restoration_net.load_state_dict(self.updated_state_dict)
-                    ## Adapted Parameter
-                    weights_for_autograd = self._load_weights()[:5] # only prim head
+                    ## Aux Head
 
+                    # ## TODO: find a way to update auxiliary head or put this outside iter loop
+                    # _, noisy_rec = self.restoration_net(noisy)
+
+                    # mask = self.mask_net(noisy)
+                    # mask = (mask > 0.5).float()
+                    # num_non_zero = torch.count_nonzero(mask)
+                    # num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+
+                    # noisy_rec_loss = torch.sum(
+                    #     (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
+                    # )
+
+                    # loss_for_inner_update = noisy_rec_loss
+
+                    # ## Auxiliary Head Update
+                    # for name, param in self.restoration_net.primary_head.named_parameters():
+                    #     param.requires_grad = False
+
+                    # self.restoration_optimizer.zero_grad()
+                    # loss_for_inner_update.backward()
+                    # self.restoration_optimizer.step()
+
+                    # for name, param in self.restoration_net.primary_head.named_parameters():
+                    #     param.requires_grad = True
+
+                    ## Adapted Parameter
                     _, noisy_rec = self.restoration_net(noisy)
 
                     mask = self.mask_net(noisy)
@@ -804,54 +794,51 @@ class RealDenoiserMetaTransfer(BaseModel):
 
                     loss_for_inner_update = noisy_rec_loss
 
-                    grad = torch.autograd.grad(
+                    # theta_1
+                    theta1_weights = OrderedDict(
+                        (name, param)
+                        for (name, param) in self.restoration_net.named_parameters()
+                    )
+
+                    # Second grad for primary head
+                    prim_head_grads = torch.autograd.grad(
                         loss_for_inner_update,
                         list(self.restoration_net.parameters())[-9:-4],
                         create_graph=True
                     )
-                    for w_idx in range(self.weight_len - 4):
-                        self.updated_state_dict[self.weight_name[w_idx]] = weights_for_autograd[w_idx] - self.inner_lr * grad[w_idx]
 
-                    ## Auxiliary Head Update
-                    for name, param in self.restoration_net.primary_head.named_parameters():
-                        param.requires_grad = False
-
-                    self.restoration_optimizer.zero_grad()
-                    loss_for_inner_update.backward()
-                    self.restoration_optimizer.step()
-
-                    for w_idx in range(self.weight_len - 4, self.weight_len):
-                        self.updated_state_dict[self.weight_name[w_idx]] = self.restoration_net.state_dict()[self.weight_name[w_idx]]
-                    for name, param in self.restoration_net.primary_head.named_parameters():
-                        param.requires_grad = True
-
+                    # theta_1+
+                    theta1_new_weights = OrderedDict()
+                    iter_meta_grads = 0
+                    for name, param in theta1_weights.items():
+                        if name in self.weight_name:
+                            theta1_new_weights[name] = param - self.inner_lr * prim_head_grads[iter_meta_grads]
+                            iter_meta_grads += 1
+                        else:
+                            theta1_new_weights[name] = param
+                    
                     ## Logging
                     self.inner_loss_meter.update(loss_for_inner_update.item())
 
-                self.restoration_net.load_state_dict(self.updated_state_dict)
-                out_clean, _ = self.restoration_net(noisy)
-                outer_loss += self.rec_criterion(out_clean, clean)
-
-                if iter_loop == self.num_inner_loop - 1:
-                    break
-                self.restoration_net.load_state_dict(self.keep_weight)
+                    # For Outer Loss
+                    out_clean, _ = self.restoration_net(noisy, theta1_new_weights)
+                    outer_loss += self.rec_criterion(out_clean, clean)
 
                 ### Inner Loop End
 
-            ### Outer Loop Start
-            for name, param in self.restoration_net.named_parameters():
-                param.require_grad = True
-            outer_loss = outer_loss / noisy_data.size()[0]
-            self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
-            outer_loss.backward()
-            self.restoration_optimizer.step()
-            self.mask_optimizer.step()
-            self._store_state()
-            ### Outer Loop End
+                ### Outer Loop Start
+                for name, param in self.restoration_net.named_parameters():
+                    param.require_grad = True
+                outer_loss = outer_loss / noisy_data.size()[0]
+                self.restoration_optimizer.zero_grad()
+                self.mask_optimizer.zero_grad()
+                outer_loss.backward()
+                self.restoration_optimizer.step()
+                self.mask_optimizer.step()
+                ### Outer Loop End
 
-            ## Logging
-            self.outer_loss_meter.update(outer_loss.item())
+                ## Logging
+                self.outer_loss_meter.update(outer_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
