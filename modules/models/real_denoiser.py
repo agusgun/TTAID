@@ -657,7 +657,7 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.num_inner_loop = 5 # TODO: inner_lr / outer_lr
         self.inner_lr = args.learning_rate / 4 # 0.00001 works previously
 
-        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'primary_head' in name]
+        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
         self.weight_len = len(self.weight_name)
         torch.autograd.set_detect_anomaly(True)
 
@@ -747,10 +747,10 @@ class RealDenoiserMetaTransfer(BaseModel):
                     break
                 param.require_grad = False
 
+            outer_loss = 0
             for iter_batch in range(noisy_data.size()[0]):
                 noisy, clean = noisy_data[iter_batch].unsqueeze(0), clean_data[iter_batch].unsqueeze(0)
 
-                outer_loss = 0
                 ### Inner Loop Start Per Sample
                 for iter_loop in range(self.num_inner_loop):
                     ## Aux Head
@@ -789,10 +789,8 @@ class RealDenoiserMetaTransfer(BaseModel):
                     num_zero = mask.size()[0] * 256 * 256 - num_non_zero
 
                     noisy_rec_loss = torch.sum(
-                        (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
+                        (torch.abs((noisy_rec - noisy) * mask)) / (torch.sum(mask) + 1e-8)
                     )
-
-                    loss_for_inner_update = noisy_rec_loss
 
                     # theta_1
                     theta1_weights = OrderedDict(
@@ -802,8 +800,8 @@ class RealDenoiserMetaTransfer(BaseModel):
 
                     # Second grad for primary head
                     prim_head_grads = torch.autograd.grad(
-                        loss_for_inner_update,
-                        list(self.restoration_net.parameters())[-9:-4],
+                        noisy_rec_loss,
+                        list(self.restoration_net.parameters())[-9:],
                         create_graph=True
                     )
 
@@ -818,27 +816,26 @@ class RealDenoiserMetaTransfer(BaseModel):
                             theta1_new_weights[name] = param
                     
                     ## Logging
-                    self.inner_loss_meter.update(loss_for_inner_update.item())
+                    self.inner_loss_meter.update(noisy_rec_loss.item())
 
                     # For Outer Loss
                     out_clean, _ = self.restoration_net(noisy, theta1_new_weights)
-                    outer_loss += self.rec_criterion(out_clean, clean)
-
+                    current_outer_loss = self.rec_criterion(out_clean, clean)
                 ### Inner Loop End
+                outer_loss += current_outer_loss
 
-                ### Outer Loop Start
-                for name, param in self.restoration_net.named_parameters():
-                    param.require_grad = True
-                outer_loss = outer_loss / noisy_data.size()[0]
-                self.restoration_optimizer.zero_grad()
-                self.mask_optimizer.zero_grad()
-                outer_loss.backward()
-                self.restoration_optimizer.step()
-                self.mask_optimizer.step()
-                ### Outer Loop End
+            ### Outer Loop Start
+            for name, param in self.restoration_net.named_parameters():
+                param.require_grad = True
+            outer_loss = outer_loss / noisy_data.size()[0]
+            self.restoration_optimizer.zero_grad()
+            outer_loss.backward()
+            self.restoration_optimizer.step()
+            self.mask_optimizer.step()
+            ### Outer Loop End
 
-                ## Logging
-                self.outer_loss_meter.update(outer_loss.item())
+            ## Logging
+            self.outer_loss_meter.update(outer_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
@@ -946,13 +943,164 @@ class RealDenoiserMetaTransfer(BaseModel):
                 psnr_ba_meter.update(psnr_val, bs)
                 ssim_ba_meter.update(ssim_val, bs)
 
-                loss = self.rec_criterion(out, clean)
                 psnr_val, bs = calculate_batch_psnr(clean, out)
                 ssim_val, _ = calculate_batch_ssim(clean, out)
 
+                loss = self.rec_criterion(out, clean)
                 loss_meter.update(loss.item())
                 psnr_aa_meter.update(psnr_val, bs)
                 ssim_aa_meter.update(ssim_val, bs)
+                
+                tqdm_batch.set_description(
+                    "({batch}/{size}) Loss: {loss:.4f} | PSNRBA: {psnrba:.4f} | SSIMBA: {ssimba:.4f} | PSNRAA: {psnraa:.4f} | SSIMAA: {ssimaa:.4f}".format(
+                        batch=curr_it + 1,
+                        size=len(val_loader),
+                        loss=loss_meter.val,
+                        psnrba=psnr_ba_meter.val,
+                        ssimba=ssim_ba_meter.val,
+                        psnraa=psnr_aa_meter.val,
+                        ssimaa=ssim_aa_meter.val,
+                    )
+                )
+
+            out_saved_img = plot_samples_per_epoch(
+                out.data,
+                output_dir=os.path.join(self.args.output_dir, "out"),
+                epoch=self.current_epoch
+            )
+            noisy_saved_img = plot_samples_per_epoch(
+                noisy.data,
+                output_dir=os.path.join(self.args.output_dir, "noisy"),
+                epoch=self.current_epoch
+            )
+            clean_saved_img = plot_samples_per_epoch(
+                clean.data,
+                output_dir=os.path.join(self.args.output_dir, "clean"),
+                epoch=self.current_epoch
+            )
+            mask_saved_img = plot_samples_per_epoch(
+                mask.data,
+                output_dir=os.path.join(self.args.output_dir, "mask"),
+                epoch=self.current_epoch
+            )
+
+            self.summary_writer.add_scalar(
+                "validation/loss", loss_meter.val, self.current_epoch
+            )
+            self.summary_writer.add_scalar(
+                "validation/psnr_ba", psnr_ba_meter.val, self.current_epoch
+            )
+            self.summary_writer.add_scalar(
+                "validation/ssim_ba", ssim_ba_meter.val, self.current_epoch
+            )
+            self.summary_writer.add_scalar(
+                "validation/psnr_aa", psnr_aa_meter.val, self.current_epoch
+            )
+            self.summary_writer.add_scalar(
+                "validation/ssim_aa", ssim_aa_meter.val, self.current_epoch
+            )
+
+            self.logger.info(
+                "Evaluation after epoch-{} | Loss: {} | PSNRBA: {} | SSIMBA: {} | PSNRAA: {} | SSIMAA: {}".format(
+                    str(self.current_epoch),
+                    str(loss_meter.val),
+                    str(psnr_ba_meter.val),
+                    str(ssim_ba_meter.val),
+                    str(psnr_aa_meter.val),
+                    str(ssim_aa_meter.val),
+                )
+            )
+            tqdm_batch.close()
+            return psnr_aa_meter.val  # to determine is best
+        elif self.args.mode == "validation": # TODO: check
+            tqdm_batch = tqdm(
+                val_loader, desc="Validation at epoch-{}".format(self.current_epoch)
+            )
+
+            loss_meter = AverageMeter()
+            psnr_ba_meter = AverageMeter()
+            ssim_ba_meter = AverageMeter()
+            psnr_aa_meter = AverageMeter()
+            ssim_aa_meter = AverageMeter()
+
+            for curr_it, data in enumerate(tqdm_batch):
+                noisy = data["noisy"]
+                clean = data["clean"]
+
+                noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
+
+                out_ba = torch.ones_like(clean)
+
+                out = torch.ones_like(clean)
+                mask = torch.ones(size=(noisy.size()[0], 1, noisy.size()[2], noisy.size()[3]), dtype=out.dtype, device=out.device)
+                for iter_batch in range(noisy.size()[0]):
+                    adapted_restoration_net = deepcopy(self.restoration_net)
+                    adapted_restoration_net.train()
+
+                    optimizer = torch.optim.Adam(
+                        adapted_restoration_net.parameters(),
+                        lr=self.args.learning_rate,
+                        betas=(self.args.beta1, self.args.beta2),
+                    )
+
+                    for name, param in adapted_restoration_net.named_parameters():
+                        param.requires_grad = False
+                        if 'head' in name:
+                            break
+
+                    current_noisy = noisy[iter_batch].unsqueeze(0)
+                    current_clean = clean[iter_batch].unsqueeze(0)
+
+                    for i in range(self.num_inner_loop):
+                        current_out_clean, current_noisy_rec = adapted_restoration_net(current_noisy)
+                        if i == 0:
+                            out_ba[iter_batch, :, :, :] = current_out_clean.detach()
+
+                        current_mask = self.mask_net(current_noisy)
+                        current_mask = (current_mask > 0.5).float()
+                        num_non_zero = torch.count_nonzero(current_mask)
+                        num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
+
+                        aux_loss = torch.sum(
+                            (torch.abs((current_noisy_rec - current_noisy) * current_mask)) / torch.sum(current_mask)
+                        )
+                        optimizer.zero_grad()
+                        aux_loss.backward()
+                        optimizer.step()
+
+                        current_out_clean = torch.clamp(current_out_clean, 0.0, 1.0)
+                    out[iter_batch, :, :, :] = current_out_clean.detach()
+                    mask[iter_batch, :, :, :] = current_mask.detach()
+
+                psnr_val, bs = calculate_batch_psnr(clean, out_ba)
+                ssim_val, _ = calculate_batch_ssim(clean, out_ba)
+                psnr_ba_meter.update(psnr_val, bs)
+                ssim_ba_meter.update(ssim_val, bs)
+
+                psnr_val, bs = calculate_batch_psnr(clean, out)
+                ssim_val, _ = calculate_batch_ssim(clean, out)
+
+                loss = self.rec_criterion(out, clean)
+                loss_meter.update(loss.item())
+                psnr_aa_meter.update(psnr_val, bs)
+                ssim_aa_meter.update(ssim_val, bs)
+                
+                out_saved_img = plot_image(
+                    out.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "out"),
+                    fname="{}.png".format(curr_it),
+                )
+                noisy_saved_img = plot_image(
+                    noisy.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "noisy"),
+                    fname="{}.png".format(curr_it),
+                )
+                clean_saved_img = plot_image(
+                    clean.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "clean"),
+                    fname="{}.png".format(curr_it),
+                )
 
                 tqdm_batch.set_description(
                     "({batch}/{size}) Loss: {loss:.4f} | PSNRBA: {psnrba:.4f} | SSIMBA: {ssimba:.4f} | PSNRAA: {psnraa:.4f} | SSIMAA: {ssimaa:.4f}".format(
@@ -982,46 +1130,135 @@ class RealDenoiserMetaTransfer(BaseModel):
                 "validation/ssim_aa", ssim_aa_meter.val, self.current_epoch
             )
 
-            # save last image
-            out_saved_img = plot_samples_per_epoch(
-                gen_batch=out.data,
-                output_dir=os.path.join(self.args.output_dir, "out"),
-                epoch=self.current_epoch,
+            self.logger.info(
+                "Evaluation after epoch-{} | Loss: {} | PSNRBA: {} | SSIMBA: {} | PSNRAA: {} | SSIMAA: {}".format(
+                    str(self.current_epoch),
+                    str(loss_meter.val),
+                    str(psnr_ba_meter.val),
+                    str(ssim_ba_meter.val),
+                    str(psnr_aa_meter.val),
+                    str(ssim_aa_meter.val),
+                )
             )
-            out_saved_img = out_saved_img.transpose((2, 0, 1))
+            tqdm_batch.close()
+            return psnr_aa_meter.val  # to determine is best
+        else:  # testing (no ground truth) # TODO: check
+            tqdm_batch = tqdm(
+                val_loader, desc="Validation at epoch-{}".format(self.current_epoch)
+            )
 
-            clean_saved_img = plot_samples_per_epoch(
-                gen_batch=clean.data,
-                output_dir=os.path.join(self.args.output_dir, "clean"),
-                epoch=self.current_epoch,
-            )
-            clean_saved_img = clean_saved_img.transpose((2, 0, 1))
+            loss_meter = AverageMeter()
+            psnr_ba_meter = AverageMeter()
+            ssim_ba_meter = AverageMeter()
+            psnr_aa_meter = AverageMeter()
+            ssim_aa_meter = AverageMeter()
 
-            noisy_saved_img = plot_samples_per_epoch(
-                gen_batch=noisy.data,
-                output_dir=os.path.join(self.args.output_dir, "noisy"),
-                epoch=self.current_epoch,
-            )
-            noisy_saved_img = noisy_saved_img.transpose((2, 0, 1))
+            for curr_it, data in enumerate(tqdm_batch):
+                noisy = data["noisy"]
+                clean = data["clean"]
 
-            mask_saved_img = plot_samples_per_epoch(
-                gen_batch=mask.data,
-                output_dir=os.path.join(self.args.output_dir, "mask"),
-                epoch=self.current_epoch,
-            )
-            mask_saved_img = mask_saved_img.transpose((2, 0, 1))
+                noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
 
-            self.summary_writer.add_image(
-                "validation/out_img", out_saved_img, self.current_epoch
+                out_ba = torch.ones_like(clean)
+
+                out = torch.ones_like(clean)
+                mask = torch.ones(size=(noisy.size()[0], 1, noisy.size()[2], noisy.size()[3]), dtype=out.dtype, device=out.device)
+
+                for iter_batch in range(noisy.size()[0]):
+                    adapted_restoration_net = deepcopy(self.restoration_net)
+                    adapted_restoration_net.train()
+
+                    optimizer = torch.optim.Adam(
+                        adapted_restoration_net.parameters(),
+                        lr=self.args.learning_rate,
+                        betas=(self.args.beta1, self.args.beta2),
+                    )
+
+                    for name, param in adapted_restoration_net.named_parameters():
+                        param.requires_grad = False
+                        if 'head' in name:
+                            break
+
+                    current_noisy = noisy[iter_batch].unsqueeze(0)
+                    current_clean = clean[iter_batch].unsqueeze(0)
+
+                    for i in range(self.num_inner_loop):
+                        current_out_clean, current_noisy_rec = adapted_restoration_net(current_noisy)
+                        if i == 0:
+                            out_ba[iter_batch, :, :, :] = current_out_clean.detach()
+
+                        current_mask = self.mask_net(current_noisy)
+                        current_mask = (current_mask > 0.5).float()
+                        num_non_zero = torch.count_nonzero(current_mask)
+                        num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
+
+                        aux_loss = torch.sum(
+                            (torch.abs((current_noisy_rec - current_noisy) * current_mask)) / torch.sum(current_mask)
+                        )
+                        optimizer.zero_grad()
+                        aux_loss.backward()
+                        optimizer.step()
+
+                        current_out_clean = torch.clamp(current_out_clean, 0.0, 1.0)
+                    out[iter_batch, :, :, :] = current_out_clean.detach()
+                    mask[iter_batch, :, :, :] = current_mask.detach()
+
+                psnr_val, bs = calculate_batch_psnr(clean, out_ba)
+                ssim_val, _ = calculate_batch_ssim(clean, out_ba)
+                psnr_ba_meter.update(psnr_val, bs)
+                ssim_ba_meter.update(ssim_val, bs)
+
+                psnr_val, bs = calculate_batch_psnr(clean, out)
+                ssim_val, _ = calculate_batch_ssim(clean, out)
+
+                loss = self.rec_criterion(out, clean)
+                loss_meter.update(loss.item())
+                psnr_aa_meter.update(psnr_val, bs)
+                ssim_aa_meter.update(ssim_val, bs)
+
+                out_saved_img = plot_image(
+                    out.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "out"),
+                    fname="{}.png".format(curr_it),
+                )
+                noisy_saved_img = plot_image(
+                    noisy.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "noisy"),
+                    fname="{}.png".format(curr_it),
+                )
+                clean_saved_img = plot_image(
+                    clean.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "clean"),
+                    fname="{}.png".format(curr_it),
+                )
+
+                tqdm_batch.set_description(
+                    "({batch}/{size}) Loss: {loss:.4f} | PSNRBA: {psnrba:.4f} | SSIMBA: {ssimba:.4f} | PSNRAA: {psnraa:.4f} | SSIMAA: {ssimaa:.4f}".format(
+                        batch=curr_it + 1,
+                        size=len(val_loader),
+                        loss=loss_meter.val,
+                        psnrba=psnr_ba_meter.val,
+                        ssimba=ssim_ba_meter.val,
+                        psnraa=psnr_aa_meter.val,
+                        ssimaa=ssim_aa_meter.val,
+                    )
+                )
+
+            self.summary_writer.add_scalar(
+                "testing/loss", loss_meter.val, self.current_epoch
             )
-            self.summary_writer.add_image(
-                "validation/clean_img", clean_saved_img, self.current_epoch
+            self.summary_writer.add_scalar(
+                "testing/psnr_ba", psnr_ba_meter.val, self.current_epoch
             )
-            self.summary_writer.add_image(
-                "validation/noisy_img", noisy_saved_img, self.current_epoch
+            self.summary_writer.add_scalar(
+                "testing/ssim_ba", ssim_ba_meter.val, self.current_epoch
             )
-            self.summary_writer.add_image(
-                "validation/mask_img", mask_saved_img, self.current_epoch
+            self.summary_writer.add_scalar(
+                "testing/psnr_aa", psnr_aa_meter.val, self.current_epoch
+            )
+            self.summary_writer.add_scalar(
+                "testing/ssim_aa", ssim_aa_meter.val, self.current_epoch
             )
 
             self.logger.info(
@@ -1036,10 +1273,6 @@ class RealDenoiserMetaTransfer(BaseModel):
             )
             tqdm_batch.close()
             return psnr_aa_meter.val  # to determine is best
-        elif self.args.mode == "validation":
-            pass #TODO
-        else:  # testing (no ground truth)
-            pass #TODO
 
     def init_training_logger(self):
         """

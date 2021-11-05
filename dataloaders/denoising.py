@@ -190,7 +190,11 @@ class RealNoiseDataLoader:
             elif args.mode == "validation":
                 self.train_loader = None
 
-                val_dataset = RealNoiseTrainingDataset(self.args, is_train=False, with_transform=False)
+                if args.meta_transfer:
+                    with_transform = True
+                else:
+                    with_transform = False
+                val_dataset = RealNoiseTrainingDataset(self.args, is_train=False, with_transform=with_transform)
                 self.val_loader = DataLoader(
                     val_dataset,
                     batch_size=args.val_batch_size,

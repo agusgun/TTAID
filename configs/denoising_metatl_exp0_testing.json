@@ -1,24 +1,19 @@
 {
-    "exp_name": "baseline_mtl",
+    "exp_name": "baseline_mtl_test",
     "model_module": "real_denoiser",
     "model_name": "RealDenoiserMetaTransfer",
-    "mode": "training",
+    "mode": "testing",
+
     "data_loader_module": "denoising",
     "data_loader_name": "RealNoiseDataLoader",
     "data_loader_workers": 1,
     "data_mode": "imgs",
-    "data_dir_poly": "./data/PolyU-Real-World-Noisy-Images-Dataset/CroppedImages",
-    "data_dir_sidd": "./data/SIDD_Small_sRGB_Only",
-    "data_exts": [
-        "*.jpg",
-        "*.png",
-        "*.tif",
-        "*.PNG",
-        "*.JPG"
-    ],
-    "crop_size": 128,
+    "data_dir": "./data/real_image_noise_dataset",
+    "data_exts": ["*.mat"],
+
+    "crop_size": 1024,
     "train_batch_size": 2,
-    "val_batch_size": 8,
+    "val_batch_size": 1,
     "stitch": false,
     "normalization": false,
 
@@ -32,7 +27,7 @@
     "restoration_base_features": 32,
     "restoration_scale_features": 16,
 
-    "learning_rate": 0.00005,
+    "learning_rate": 0.00001,
     "beta1": 0.9,
     "beta2": 0.999,
 
@@ -41,5 +36,7 @@
     "save_every": 1,
     "meta_transfer": 1,
 
-    "pretrained_path": "experiments/baseline_maxl/checkpoints/model_149.pth"
+    "pretrained_path": "experiments/baseline_maxl/checkpoints/model_149.pth",
+
+    "resume": "experiments/baseline_mtl_0/checkpoints/model_best.pth"
 }
