@@ -104,7 +104,6 @@ class RealDenoiserBase(BaseModel):
         )
 
         self.restoration_net.train()
-        self.mask_net.train()
 
         end_time = time.time()
         for curr_it, data in enumerate(tqdm_batch):
@@ -119,20 +118,13 @@ class RealDenoiserBase(BaseModel):
             self.restoration_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
-
-            mask = self.mask_net(noisy)
-            num_non_zero = torch.count_nonzero(mask)
-            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
-
-            noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
             clean_loss = self.rec_criterion(out_clean, clean)
-            loss = clean_loss + noisy_rec_loss
+            loss = clean_loss
             loss.backward()
 
             self.restoration_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
-            self.noisy_loss_meter.update(noisy_rec_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
@@ -143,122 +135,21 @@ class RealDenoiserBase(BaseModel):
                 self.clean_loss_meter.val,
                 self.current_iteration,
             )
-            self.summary_writer.add_scalar(
-                "epoch/conventional/loss_noisy",
-                self.noisy_loss_meter.val,
-                self.current_iteration,
-            )
 
             tqdm_batch.set_description(
-                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}".format(
+                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f}".format(
                     batch=curr_it + 1,
                     size=len(train_loader),
                     data=self.data_time_meter.val,
                     bt=self.batch_time_meter.val,
                     lossC=self.clean_loss_meter.val,
-                    lossN=self.noisy_loss_meter.val,
                 )
             )
         self.logger.info(
-            "Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}".format(
+            "Training at epoch-{} stage: normal training | LR: {} LossC: {}".format(
                 str(self.current_epoch),
                 str(self.args.learning_rate),
                 str(self.clean_loss_meter.val),
-                str(self.noisy_loss_meter.val),
-            )
-        )
-        tqdm_batch.close()
-
-        tqdm_batch = tqdm(
-            train_loader, desc="epoch-{} meta-training".format(self.current_epoch)
-        )
-
-        end_time = time.time()
-        for curr_it, data in enumerate(tqdm_batch):
-            self.data_time_meter.update(time.time() - end_time)
-
-            noisy = data["noisy"]
-            clean = data["clean"]
-
-            noisy = noisy.to(self.device)
-            clean = clean.to(self.device)
-
-            self.restoration_optimizer.zero_grad()
-
-            out_clean, noisy_rec = self.restoration_net(noisy)
-
-            mask = self.mask_net(noisy)
-            num_non_zero = torch.count_nonzero(mask)
-            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
-
-            noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
-            clean_loss = self.rec_criterion(out_clean, clean)
-            loss = clean_loss + noisy_rec_loss
-
-            # current theta_1
-            theta1_weights = OrderedDict(
-                (name, param)
-                for (name, param) in self.restoration_net.named_parameters()
-            )
-
-            # second derivative
-            grads = torch.autograd.grad(
-                loss, self.restoration_net.parameters(), create_graph=True
-            )
-            params_data = [p.data for p in list(self.restoration_net.parameters())]
-
-            # theta_1+
-            alpha = self.args.learning_rate
-            theta1_weights = OrderedDict(
-                (name, param - alpha * grad)
-                for ((name, param), grad, data) in zip(
-                    theta1_weights.items(), grads, params_data
-                )
-            )
-
-            # compute primary loss
-            out_clean, noisy_rec = self.restoration_net(noisy, theta1_weights)
-            clean_loss = self.rec_criterion(out_clean, clean)
-
-
-            self.mask_optimizer.zero_grad()
-            clean_loss.backward()  # add entropy loss here if want
-            self.mask_optimizer.step()
-
-            self.clean_loss_meter.update(clean_loss.item())
-            self.noisy_loss_meter.update(noisy_rec_loss.item())
-
-            self.current_iteration += 1
-            self.batch_time_meter.update(time.time() - end_time)
-            end_time = time.time()
-
-            self.summary_writer.add_scalar(
-                "epoch/meta-training/clean_loss",
-                self.clean_loss_meter.val,
-                self.current_iteration,
-            )
-            self.summary_writer.add_scalar(
-                "epoch/meta-training/noisy_loss",
-                self.noisy_loss_meter.val,
-                self.current_iteration,
-            )
-
-            tqdm_batch.set_description(
-                "Meta-training ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}".format(
-                    batch=curr_it + 1,
-                    size=len(train_loader),
-                    data=self.data_time_meter.val,
-                    bt=self.batch_time_meter.val,
-                    lossC=self.clean_loss_meter.val,
-                    lossN=self.noisy_loss_meter.val,
-                )
-            )
-        self.logger.info(
-            "Meta-training: Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}".format(
-                str(self.current_epoch),
-                str(self.args.learning_rate),
-                str(self.clean_loss_meter.val),
-                str(self.noisy_loss_meter.val),
             )
         )
         tqdm_batch.close()
@@ -269,7 +160,6 @@ class RealDenoiserBase(BaseModel):
         Validation step for each mini-batch
         """
         self.restoration_net.eval()
-        self.mask_net.eval()
         if self.args.mode == "training":
             tqdm_batch = tqdm(
                 val_loader, desc="Validation at epoch-{}".format(self.current_epoch)
@@ -606,7 +496,6 @@ class RealDenoiserBase(BaseModel):
         self.batch_time_meter = AverageMeter()
         self.data_time_meter = AverageMeter()
         self.clean_loss_meter = AverageMeter()
-        self.noisy_loss_meter = AverageMeter()
 
     def count_parameters(self):
         """
