@@ -119,15 +119,12 @@ class RealDenoiserBase(BaseModel):
             self.restoration_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
-            mask = self.mask_net(noisy)
 
-            mask = (mask > 0.5).float()
+            mask = self.mask_net(noisy)
             num_non_zero = torch.count_nonzero(mask)
             num_zero = mask.size()[0] * 256 * 256 - num_non_zero
 
-            noisy_rec_loss = torch.sum(
-                (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
-            )
+            noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
             clean_loss = self.rec_criterion(out_clean, clean)
             loss = clean_loss + noisy_rec_loss
             loss.backward()
@@ -189,15 +186,12 @@ class RealDenoiserBase(BaseModel):
             self.restoration_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
-            mask = self.mask_net(noisy)
 
-            mask = (mask > 0.5).float()
+            mask = self.mask_net(noisy)
             num_non_zero = torch.count_nonzero(mask)
             num_zero = mask.size()[0] * 256 * 256 - num_non_zero
 
-            noisy_rec_loss = torch.sum(
-                (torch.abs((noisy_rec - noisy) * mask)) / torch.sum(mask)
-            )
+            noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
             clean_loss = self.rec_criterion(out_clean, clean)
             loss = clean_loss + noisy_rec_loss
 
