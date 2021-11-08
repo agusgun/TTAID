@@ -4,6 +4,51 @@ import torch.nn.functional as F
 from torch import nn
 from .common import conv, Encoder, Decoder, ResidualBlock
 
+class RestorationNetV0(nn.Module):
+    def __init__(self, input_nc, output_nc, base_features, scale_features, kernel_size, bias=False):
+        super(RestorationNetV0, self).__init__()
+
+        act = nn.ReLU()
+
+        # Network Body
+        self.shallow_fe = nn.Sequential(
+            conv(input_nc, base_features, kernel_size, bias=bias)
+        )
+
+        self.encoder = Encoder(base_features, scale_features, kernel_size, bias, act)
+        self.decoder = Decoder(base_features, scale_features, kernel_size, bias, act)
+
+        # Primary Head
+        self.primary_head = nn.Sequential(
+            ResidualBlock(base_features, kernel_size, bias, act),
+            ResidualBlock(base_features, kernel_size, bias, act),
+            conv(base_features, output_nc, kernel_size, bias=bias)
+        )
+        self.pre_aux_head = conv(base_features, base_features, kernel_size, bias=bias)
+        self.aux_pri_conjunction = conv(base_features + output_nc, base_features, kernel_size, bias=bias)
+
+        # Auxiliary Head
+        self.auxiliary_head = nn.Sequential(
+            ResidualBlock(base_features, kernel_size, bias, act),
+            conv(base_features, output_nc, kernel_size, bias=bias)
+        )
+
+    def forward(self, x, weights=None):
+        feat = self.shallow_fe(x)
+        feat = self.encoder(feat)
+        feat = self.decoder(feat)
+        
+        feat = feat[0]
+        residual = self.primary_head(feat)
+        clean_pred = residual + x
+
+        feat = self.pre_aux_head(feat)
+        feat = torch.cat([feat, residual], dim=1)
+        feat = self.aux_pri_conjunction(feat)
+        reconstructed_noisy = self.auxiliary_head(feat)
+
+        return clean_pred, reconstructed_noisy
+
 class RestorationNet(nn.Module):
     def __init__(self, input_nc, output_nc, base_features, scale_features, kernel_size, bias=False):
         super(RestorationNet, self).__init__()

@@ -118,13 +118,16 @@ class RealDenoiserBase(BaseModel):
             self.restoration_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
+
+            noisy_rec_loss = self.rec_criterion(noisy_rec, noisy)
             clean_loss = self.rec_criterion(out_clean, clean)
-            loss = clean_loss
+            loss = clean_loss + noisy_rec_loss
             loss.backward()
 
             self.restoration_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
+            self.noisy_loss_meter.update(noisy_rec_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
@@ -135,21 +138,28 @@ class RealDenoiserBase(BaseModel):
                 self.clean_loss_meter.val,
                 self.current_iteration,
             )
+            self.summary_writer.add_scalar(
+                "epoch/conventional/loss_noisy",
+                self.noisy_loss_meter.val,
+                self.current_iteration,
+            )
 
             tqdm_batch.set_description(
-                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f}".format(
+                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}".format(
                     batch=curr_it + 1,
                     size=len(train_loader),
                     data=self.data_time_meter.val,
                     bt=self.batch_time_meter.val,
                     lossC=self.clean_loss_meter.val,
+                    lossN=self.noisy_loss_meter.val,
                 )
             )
         self.logger.info(
-            "Training at epoch-{} stage: normal training | LR: {} LossC: {}".format(
+            "Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}".format(
                 str(self.current_epoch),
                 str(self.args.learning_rate),
                 str(self.clean_loss_meter.val),
+                str(self.noisy_loss_meter.val),
             )
         )
         tqdm_batch.close()
@@ -160,6 +170,7 @@ class RealDenoiserBase(BaseModel):
         Validation step for each mini-batch
         """
         self.restoration_net.eval()
+        self.mask_net.eval()
         if self.args.mode == "training":
             tqdm_batch = tqdm(
                 val_loader, desc="Validation at epoch-{}".format(self.current_epoch)
@@ -496,6 +507,7 @@ class RealDenoiserBase(BaseModel):
         self.batch_time_meter = AverageMeter()
         self.data_time_meter = AverageMeter()
         self.clean_loss_meter = AverageMeter()
+        self.noisy_loss_meter = AverageMeter()
 
     def count_parameters(self):
         """
