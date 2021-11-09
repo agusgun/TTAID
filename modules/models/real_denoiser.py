@@ -104,6 +104,7 @@ class RealDenoiserBase(BaseModel):
         )
 
         self.restoration_net.train()
+        self.mask_net.train()
 
         end_time = time.time()
         for curr_it, data in enumerate(tqdm_batch):
@@ -116,15 +117,21 @@ class RealDenoiserBase(BaseModel):
             clean = clean.to(self.device)
 
             self.restoration_optimizer.zero_grad()
+            self.mask_optimizer.zero_grad()
 
             out_clean, noisy_rec = self.restoration_net(noisy)
 
-            noisy_rec_loss = self.rec_criterion(noisy_rec, noisy)
+            mask = self.mask_net(noisy)
+            num_non_zero = torch.count_nonzero(mask)
+            num_zero = mask.size()[0] * 256 * 256 - num_non_zero
+
+            noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
             clean_loss = self.rec_criterion(out_clean, clean)
             loss = clean_loss + noisy_rec_loss
             loss.backward()
 
             self.restoration_optimizer.step()
+            self.mask_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
             self.noisy_loss_meter.update(noisy_rec_loss.item())
@@ -163,6 +170,7 @@ class RealDenoiserBase(BaseModel):
             )
         )
         tqdm_batch.close()
+
 
     @torch.no_grad()
     def validate(self, val_loader):
@@ -298,6 +306,7 @@ class RealDenoiserBase(BaseModel):
                 else:
                     out_clean, _ = self.restoration_net(noisy)
 
+                mask = self.mask_net(noisy)
                 out_clean = torch.clamp(out_clean, 0.0, 1.0)
                 clean = torch.clamp(clean, 0.0, 1.0)
                 noisy = torch.clamp(noisy, 0.0, 1.0)
@@ -315,6 +324,11 @@ class RealDenoiserBase(BaseModel):
                 clean_saved_img = plot_image(
                     clean.data[0],
                     output_dir=os.path.join(self.args.output_dir, "clean"),
+                    fname="{}.png".format(curr_it),
+                )                
+                mask_saved_img = plot_image(
+                    mask.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "mask"),
                     fname="{}.png".format(curr_it),
                 )
 
@@ -464,6 +478,9 @@ class RealDenoiserBase(BaseModel):
         Path(os.path.join(self.args.output_dir, "out")).mkdir(
             parents=True, exist_ok=True
         )
+        Path(os.path.join(self.args.output_dir, "mask")).mkdir(
+            parents=True, exist_ok=True
+        )
 
     def init_testing_logger(self):
         """
@@ -479,6 +496,9 @@ class RealDenoiserBase(BaseModel):
             parents=True, exist_ok=True
         )
         Path(os.path.join(self.args.output_dir, "out")).mkdir(
+            parents=True, exist_ok=True
+        )
+        Path(os.path.join(self.args.output_dir, "mask")).mkdir(
             parents=True, exist_ok=True
         )
 
