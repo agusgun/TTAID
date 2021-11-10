@@ -17,6 +17,7 @@ from tqdm import tqdm
 from utils.metrics import calculate_batch_psnr, calculate_batch_ssim
 from pathlib import Path
 
+from modules.losses.total_variation import TotalVariationLoss
 
 class RealDenoiserBase(BaseModel):
     def __init__(self, args, device):
@@ -25,6 +26,7 @@ class RealDenoiserBase(BaseModel):
         self.mask_net, self.restoration_net, self.rec_criterion = build_components(
             self.args
         )
+        self.tv_loss = TotalVariationLoss()
 
         self.mask_optimizer = torch.optim.Adam(
             self.mask_net.parameters(),
@@ -127,7 +129,8 @@ class RealDenoiserBase(BaseModel):
 
             noisy_rec_loss = torch.mean(torch.abs(noisy - noisy_rec) * mask)
             clean_loss = self.rec_criterion(out_clean, clean)
-            loss = clean_loss + noisy_rec_loss
+            tv_loss = 1e-5 * (-self.tv_loss(mask)).sum()
+            loss = clean_loss + noisy_rec_loss + tv_loss
             loss.backward()
 
             self.restoration_optimizer.step()
@@ -135,6 +138,7 @@ class RealDenoiserBase(BaseModel):
 
             self.clean_loss_meter.update(clean_loss.item())
             self.noisy_loss_meter.update(noisy_rec_loss.item())
+            self.tv_loss_meter.update(tv_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
@@ -150,15 +154,21 @@ class RealDenoiserBase(BaseModel):
                 self.noisy_loss_meter.val,
                 self.current_iteration,
             )
+            self.summary_writer.add_scalar(
+                "epoch/conventional/loss_tv_mask",
+                self.tv_loss_meter.val,
+                self.current_iteration,
+            )
 
             tqdm_batch.set_description(
-                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}".format(
+                "ConventionalTraining: ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f} | lossTV: {lossTV:.4f}".format(
                     batch=curr_it + 1,
                     size=len(train_loader),
                     data=self.data_time_meter.val,
                     bt=self.batch_time_meter.val,
                     lossC=self.clean_loss_meter.val,
                     lossN=self.noisy_loss_meter.val,
+                    lossTV=self.tv_loss_meter.val,
                 )
             )
         self.logger.info(
@@ -528,6 +538,7 @@ class RealDenoiserBase(BaseModel):
         self.data_time_meter = AverageMeter()
         self.clean_loss_meter = AverageMeter()
         self.noisy_loss_meter = AverageMeter()
+        self.tv_loss_meter = AverageMeter()
 
     def count_parameters(self):
         """
