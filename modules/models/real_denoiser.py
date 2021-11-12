@@ -19,6 +19,11 @@ from pathlib import Path
 
 from modules.losses.total_variation import TotalVariationLoss
 
+def gradient(y):
+    gradient_h=torch.abs(y[:, :, :, :-1] - y[:, :, :, 1:])
+    gradient_y=torch.abs(y[:, :, :-1, :] - y[:, :, 1:, :])
+
+    return gradient_h, gradient_y
 
 class RealDenoiserBase(BaseModel):
     def __init__(self, args, device):
@@ -220,15 +225,19 @@ class RealDenoiserBase(BaseModel):
 
             # compute primary loss
             out_clean, noisy_rec = self.restoration_net(noisy, theta1_weights)
+            gradient_h_mask, gradient_v_mask = gradient(mask)
+            gradient_h_gt, gradient_v_gt = gradient(noisy)
+            additional_loss = 1e-2 * (self.rec_criterion(gradient_h_mask, gradient_h_gt) + self.rec_criterion(gradient_v_mask, gradient_v_gt))
             clean_loss = self.rec_criterion(out_clean, clean)
-
+            mask_loss = clean_loss + additional_loss
 
             self.mask_optimizer.zero_grad()
-            clean_loss.backward()  # add entropy loss here if want
+            mask_loss.backward()  # add entropy loss here if want
             self.mask_optimizer.step()
 
             self.clean_loss_meter.update(clean_loss.item())
             self.noisy_loss_meter.update(noisy_rec_loss.item())
+            self.additional_loss_meter.update(additional_loss.item())
 
             self.current_iteration += 1
             self.batch_time_meter.update(time.time() - end_time)
@@ -244,23 +253,30 @@ class RealDenoiserBase(BaseModel):
                 self.noisy_loss_meter.val,
                 self.current_iteration,
             )
+            self.summary_writer.add_scalar(
+                "epoch/meta-training/additional_loss",
+                self.additional_loss_meter.val,
+                self.current_iteration,
+            )
 
             tqdm_batch.set_description(
-                "Meta-training ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f}".format(
+                "Meta-training ({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | LossC: {lossC:.4f} | LossN: {lossN:.4f} | LossAdd: {lossAdd:.4f}".format(
                     batch=curr_it + 1,
                     size=len(train_loader),
                     data=self.data_time_meter.val,
                     bt=self.batch_time_meter.val,
                     lossC=self.clean_loss_meter.val,
                     lossN=self.noisy_loss_meter.val,
+                    lossAdd=self.additional_loss_meter.val,
                 )
             )
         self.logger.info(
-            "Meta-training: Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {}".format(
+            "Meta-training: Training at epoch-{} stage: normal training | LR: {} LossC: {} LossN: {} LossAdd: {}".format(
                 str(self.current_epoch),
                 str(self.args.learning_rate),
                 str(self.clean_loss_meter.val),
                 str(self.noisy_loss_meter.val),
+                str(self.additional_loss_meter.val),
             )
         )
         tqdm_batch.close()
@@ -621,6 +637,7 @@ class RealDenoiserBase(BaseModel):
         self.data_time_meter = AverageMeter()
         self.clean_loss_meter = AverageMeter()
         self.noisy_loss_meter = AverageMeter()
+        self.additional_loss_meter = AverageMeter()
 
     def count_parameters(self):
         """
