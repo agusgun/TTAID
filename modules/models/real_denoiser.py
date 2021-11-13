@@ -680,7 +680,7 @@ class RealDenoiserMetaTransfer(BaseModel):
 
         # Meta Learning
         self.num_inner_loop = 5 # TODO: inner_lr / outer_lr
-        self.inner_lr = args.learning_rate / 4 # 0.00001 works previously
+        self.inner_lr = args.learning_rate # 0.00001 works previously
 
         self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
         self.weight_len = len(self.weight_name)
@@ -763,9 +763,6 @@ class RealDenoiserMetaTransfer(BaseModel):
             clean_data = data["clean"].to(self.device)
 
             # Optimization
-            self.restoration_optimizer.zero_grad()
-            self.mask_optimizer.zero_grad()
-
             # Freeze network body
             for name, param in self.restoration_net.named_parameters():
                 if "head" in name:
@@ -809,13 +806,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                     _, noisy_rec = self.restoration_net(noisy)
 
                     mask = self.mask_net(noisy)
-                    mask = (mask > 0.5).float()
-                    num_non_zero = torch.count_nonzero(mask)
-                    num_zero = mask.size()[0] * 256 * 256 - num_non_zero
-
-                    noisy_rec_loss = torch.sum(
-                        (torch.abs((noisy_rec - noisy) * mask)) / (torch.sum(mask) + 1e-8)
-                    )
+                    noisy_rec_loss = 10 * torch.mean(torch.abs(noisy - noisy_rec) * mask)
 
                     # theta_1
                     theta1_weights = OrderedDict(
@@ -852,8 +843,10 @@ class RealDenoiserMetaTransfer(BaseModel):
             ### Outer Loop Start
             for name, param in self.restoration_net.named_parameters():
                 param.require_grad = True
-            outer_loss = outer_loss / noisy_data.size()[0]
+            # outer_loss = outer_loss / noisy_data.size()[0]
+            outer_loss = 10 * outer_loss
             self.restoration_optimizer.zero_grad()
+            self.mask_optimizer.zero_grad()
             outer_loss.backward()
             self.restoration_optimizer.step()
             self.mask_optimizer.step()
@@ -948,13 +941,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                             out_ba[iter_batch, :, :, :] = current_out_clean.detach()
 
                         current_mask = self.mask_net(current_noisy)
-                        current_mask = (current_mask > 0.5).float()
-                        num_non_zero = torch.count_nonzero(current_mask)
-                        num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
-
-                        aux_loss = torch.sum(
-                            (torch.abs((current_noisy_rec - current_noisy) * current_mask)) / torch.sum(current_mask)
-                        )
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()
@@ -1087,9 +1074,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                         num_non_zero = torch.count_nonzero(current_mask)
                         num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
 
-                        aux_loss = torch.sum(
-                            (torch.abs((current_noisy_rec - current_noisy) * current_mask)) / torch.sum(current_mask)
-                        )
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()
@@ -1218,9 +1203,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                         num_non_zero = torch.count_nonzero(current_mask)
                         num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
 
-                        aux_loss = torch.sum(
-                            (torch.abs((current_noisy_rec - current_noisy) * current_mask)) / torch.sum(current_mask)
-                        )
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()
