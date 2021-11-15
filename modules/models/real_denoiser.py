@@ -660,7 +660,6 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.mask_net, self.restoration_net, self.rec_criterion = build_components(
             self.args
         )
-        self._load_pretrained_model(args.pretrained_path)
 
         self.mask_optimizer = torch.optim.Adam( # Optim for Mask Net
             self.mask_net.parameters(),
@@ -685,13 +684,6 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
         self.weight_len = len(self.weight_name)
         torch.autograd.set_detect_anomaly(True)
-
-    def _load_pretrained_model(self, pretrained_path):
-        if not pretrained_path is None:
-            checkpoint = torch.load(pretrained_path)
-            self.restoration_net.load_state_dict(checkpoint["restoration_net_state_dict"])
-            self.mask_net.load_state_dict(checkpoint["mask_net_state_dict"])
-            self.logger.info("Succesfully loaded from {}".format(pretrained_path))
 
     def load_checkpoint(self, file_path):
         """
