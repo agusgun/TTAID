@@ -798,7 +798,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                     _, noisy_rec = self.restoration_net(noisy)
 
                     mask = self.mask_net(noisy)
-                    noisy_rec_loss = 10 * self.rec_criterion(noisy, noisy_rec)
+                    noisy_rec_loss = 10 * torch.mean(torch.abs(noisy - noisy_rec) * mask)
 
                     # theta_1
                     theta1_weights = OrderedDict(
@@ -933,7 +933,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                             out_ba[iter_batch, :, :, :] = current_out_clean.detach()
 
                         current_mask = self.mask_net(current_noisy)
-                        aux_loss = self.rec_criterion(current_noisy, current_noisy_rec)
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()
@@ -1066,7 +1066,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                         num_non_zero = torch.count_nonzero(current_mask)
                         num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
 
-                        aux_loss = self.rec_criterion(current_noisy, current_noisy_rec)
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()
@@ -1195,7 +1195,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                         num_non_zero = torch.count_nonzero(current_mask)
                         num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
 
-                        aux_loss = self.rec_criterion(current_noisy, current_noisy_rec)
+                        aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
                         optimizer.step()

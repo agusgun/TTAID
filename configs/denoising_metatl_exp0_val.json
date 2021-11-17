@@ -43,5 +43,5 @@
 
     "pretrained_path": "experiments/baseline_maxl/checkpoints/model_149.pth",
 
-    "resume": "experiments/baseline_mtl_0/checkpoints/model_best.pth"
+    "resume": "experiments/baseline_mtl/checkpoints/model_best.pth"
 }

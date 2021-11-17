@@ -14,7 +14,8 @@
     "crop_size": 1024,
     "train_batch_size": 16,
     "val_batch_size": 1,
-    "stitch": false,
+    "stitch": true,
+    "stitch_n_patches": [4, 4],
     "normalization": false,
 
     "cuda": true,
