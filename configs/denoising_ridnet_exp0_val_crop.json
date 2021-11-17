@@ -1,0 +1,44 @@
+{
+    "exp_name": "ridnet_val_crop",
+    "model_module": "ridnet",
+    "model_name": "RIDNet",
+    "mode": "validation",
+
+    "data_loader_module": "denoising",
+    "data_loader_name": "RealNoiseDataLoader",
+    "data_loader_workers": 1,
+    "data_mode": "imgs",
+    "data_dir_poly": "./data/PolyU-Real-World-Noisy-Images-Dataset/CroppedImages",
+    "data_dir_sidd": "./data/SIDD_Small_sRGB_Only",
+    "data_exts": [
+        "*.jpg",
+        "*.png",
+        "*.tif",
+        "*.PNG",
+        "*.JPG"
+    ],
+
+    "crop_size": 1024,
+    "train_batch_size": 16,
+    "val_batch_size": 1,
+    "stitch": false,
+    "normalization": false,
+
+    "cuda": true,
+    "gpu_device": 0,
+    "seed": 12345,
+
+    "n_feats": 64,
+    "reduction": 16,
+
+    "learning_rate": 0.0001,
+    "beta1": 0.9,
+    "beta2": 0.999,
+
+    "max_epoch": 150,
+    "validate_every": 1,
+    "save_every": 1,
+    "meta_transfer": 1,
+
+    "resume": "experiments/ridnet/checkpoints/model_best.pth"
+}
