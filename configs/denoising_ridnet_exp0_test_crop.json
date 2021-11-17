@@ -1,7 +1,7 @@
 {
-    "exp_name": "baseline_mtl_test",
-    "model_module": "real_denoiser",
-    "model_name": "RealDenoiserMetaTransfer",
+    "exp_name": "ridnet_test_crop",
+    "model_module": "ridnet",
+    "model_name": "RIDNet",
     "mode": "testing",
 
     "data_loader_module": "denoising",
@@ -12,7 +12,7 @@
     "data_exts": ["*.mat"],
 
     "crop_size": 1024,
-    "train_batch_size": 2,
+    "train_batch_size": 16,
     "val_batch_size": 1,
     "stitch": false,
     "normalization": false,
@@ -21,13 +21,10 @@
     "gpu_device": 0,
     "seed": 12345,
 
-    "input_channels": 3,
-    "output_channels": 3,
-    "mask_base_features": 32,
-    "restoration_base_features": 32,
-    "restoration_scale_features": 16,
+    "n_feats": 64,
+    "reduction": 16,
 
-    "learning_rate": 0.00001,
+    "learning_rate": 0.0001,
     "beta1": 0.9,
     "beta2": 0.999,
 
@@ -36,7 +33,5 @@
     "save_every": 1,
     "meta_transfer": 1,
 
-    "pretrained_path": "experiments/baseline_maxl/checkpoints/model_149.pth",
-
-    "resume": "experiments/baseline_mtl/checkpoints/model_best.pth"
+    "resume": "experiments/ridnet/checkpoints/model_best.pth"
 }

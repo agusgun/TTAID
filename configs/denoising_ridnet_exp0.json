@@ -1,8 +1,9 @@
 {
-    "exp_name": "baseline_mtl_val",
-    "model_module": "real_denoiser",
-    "model_name": "RealDenoiserMetaTransfer",
-    "mode": "validation",
+    "exp_name": "ridnet",
+    "model_module": "ridnet",
+    "model_name": "RIDNet",
+    "mode": "training",
+
     "data_loader_module": "denoising",
     "data_loader_name": "RealNoiseDataLoader",
     "data_loader_workers": 1,
@@ -16,9 +17,10 @@
         "*.PNG",
         "*.JPG"
     ],
-    "crop_size": 1024,
-    "train_batch_size": 2,
-    "val_batch_size": 1,
+
+    "crop_size": 128,
+    "train_batch_size": 16,
+    "val_batch_size": 8,
     "stitch": false,
     "normalization": false,
 
@@ -26,22 +28,15 @@
     "gpu_device": 0,
     "seed": 12345,
 
-    "input_channels": 3,
-    "output_channels": 3,
-    "mask_base_features": 32,
-    "restoration_base_features": 32,
-    "restoration_scale_features": 16,
+    "n_feats": 64,
+    "reduction": 16,
 
-    "learning_rate": 0.00001,
+    "learning_rate": 0.0001,
     "beta1": 0.9,
     "beta2": 0.999,
 
     "max_epoch": 150,
     "validate_every": 1,
     "save_every": 1,
-    "meta_transfer": 1,
-
-    "pretrained_path": "experiments/baseline_maxl/checkpoints/model_149.pth",
-
-    "resume": "experiments/baseline_mtl/checkpoints/model_best.pth"
+    "meta_transfer": 1
 }
