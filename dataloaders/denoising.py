@@ -48,7 +48,7 @@ class DIV2KSynthesisDegradationLoader:
             else:
                 self.train_loader = None
 
-                val_dataset = NAMRealNoise(args, is_train=False, with_transform=True)
+                val_dataset = NAMRealNoise(args, is_train=False, with_transform=False)
                 self.val_loader = DataLoader(
                     val_dataset,
                     batch_size=args.val_batch_size,
