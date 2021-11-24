@@ -681,7 +681,7 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.num_inner_loop = 5 # TODO: inner_lr / outer_lr
         self.inner_lr = args.learning_rate # 0.00001 works previously
 
-        self.weight_name = [name for name, _ in self.restoration_net.named_parameters() if 'head' in name]
+        self.weight_name = [name for name, _ in self.restoration_net.named_parameters()]
         self.weight_len = len(self.weight_name)
         torch.autograd.set_detect_anomaly(True)
 
@@ -807,9 +807,9 @@ class RealDenoiserMetaTransfer(BaseModel):
                     )
 
                     # Second grad for primary head
-                    prim_head_grads = torch.autograd.grad(
+                    grads = torch.autograd.grad(
                         noisy_rec_loss,
-                        list(self.restoration_net.parameters())[-9:],
+                        list(self.restoration_net.parameters()),
                         create_graph=True
                     )
 
@@ -818,7 +818,7 @@ class RealDenoiserMetaTransfer(BaseModel):
                     iter_meta_grads = 0
                     for name, param in theta1_weights.items():
                         if name in self.weight_name:
-                            theta1_new_weights[name] = param - self.inner_lr * prim_head_grads[iter_meta_grads]
+                            theta1_new_weights[name] = param - self.inner_lr * grads[iter_meta_grads]
                             iter_meta_grads += 1
                         else:
                             theta1_new_weights[name] = param
