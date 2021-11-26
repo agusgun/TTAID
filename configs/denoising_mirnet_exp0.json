@@ -1,0 +1,39 @@
+{
+    "exp_name": "denoising_mirnet_exp0",
+    "model_module": "mirnet",
+    "model_name": "MIRNet",
+    "mode": "training",
+
+    "data_loader_module": "denoising",
+    "data_loader_name": "RealNoiseDataLoader",
+    "data_loader_workers": 1,
+    "data_mode": "imgs",
+    "data_dir_poly": "./data/PolyU-Real-World-Noisy-Images-Dataset/CroppedImages",
+    "data_dir_sidd": "./data/SIDD_Small_sRGB_Only",
+    "data_exts": [
+        "*.jpg",
+        "*.png",
+        "*.tif",
+        "*.PNG",
+        "*.JPG"
+    ],
+
+    "crop_size": 128,
+    "train_batch_size": 4,
+    "val_batch_size": 4,
+    "stitch": false,
+    "normalization": false,
+
+    "cuda": true,
+    "gpu_device": 0,
+    "seed": 12345,
+
+    "learning_rate": 0.0002,
+    "beta1": 0.9,
+    "beta2": 0.999,
+
+    "max_epoch": 150,
+    "validate_every": 3,
+    "save_every": 3,
+    "meta_transfer": 1
+}
