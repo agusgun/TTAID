@@ -756,10 +756,10 @@ class RealDenoiserMetaTransfer(BaseModel):
 
             # Optimization
             # Freeze network body
-            for name, param in self.restoration_net.named_parameters():
-                if "head" in name:
-                    break
-                param.require_grad = False
+            # for name, param in self.restoration_net.named_parameters():
+            #     if "head" in name:
+            #         break
+            #     param.require_grad = False
 
             outer_loss = 0
             for iter_batch in range(noisy_data.size()[0]):
@@ -833,8 +833,8 @@ class RealDenoiserMetaTransfer(BaseModel):
                 outer_loss += current_outer_loss
 
             ### Outer Loop Start
-            for name, param in self.restoration_net.named_parameters():
-                param.require_grad = True
+            # for name, param in self.restoration_net.named_parameters():
+            #     param.require_grad = True
             # outer_loss = outer_loss / noisy_data.size()[0]
             outer_loss = 10 * outer_loss
             self.restoration_optimizer.zero_grad()
@@ -919,10 +919,10 @@ class RealDenoiserMetaTransfer(BaseModel):
                         betas=(self.args.beta1, self.args.beta2),
                     )
 
-                    for name, param in adapted_restoration_net.named_parameters():
-                        param.requires_grad = False
-                        if 'head' in name:
-                            break
+                    # for name, param in adapted_restoration_net.named_parameters():
+                    #     param.requires_grad = False
+                    #     if 'head' in name:
+                    #         break
 
                     current_noisy = noisy[iter_batch].unsqueeze(0)
                     current_clean = clean[iter_batch].unsqueeze(0)
@@ -1048,10 +1048,10 @@ class RealDenoiserMetaTransfer(BaseModel):
                         betas=(self.args.beta1, self.args.beta2),
                     )
 
-                    for name, param in adapted_restoration_net.named_parameters():
-                        param.requires_grad = False
-                        if 'head' in name:
-                            break
+                    # for name, param in adapted_restoration_net.named_parameters():
+                    #     param.requires_grad = False
+                    #     if 'head' in name:
+                    #         break
 
                     current_noisy = noisy[iter_batch].unsqueeze(0)
                     current_clean = clean[iter_batch].unsqueeze(0)
@@ -1062,10 +1062,6 @@ class RealDenoiserMetaTransfer(BaseModel):
                             out_ba[iter_batch, :, :, :] = current_out_clean.detach()
 
                         current_mask = self.mask_net(current_noisy)
-                        current_mask = (current_mask > 0.5).float()
-                        num_non_zero = torch.count_nonzero(current_mask)
-                        num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
-
                         aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
@@ -1177,10 +1173,10 @@ class RealDenoiserMetaTransfer(BaseModel):
                         betas=(self.args.beta1, self.args.beta2),
                     )
 
-                    for name, param in adapted_restoration_net.named_parameters():
-                        param.requires_grad = False
-                        if 'head' in name:
-                            break
+                    # for name, param in adapted_restoration_net.named_parameters():
+                    #     param.requires_grad = False
+                    #     if 'head' in name:
+                    #         break
 
                     current_noisy = noisy[iter_batch].unsqueeze(0)
                     current_clean = clean[iter_batch].unsqueeze(0)
@@ -1191,10 +1187,6 @@ class RealDenoiserMetaTransfer(BaseModel):
                             out_ba[iter_batch, :, :, :] = current_out_clean.detach()
 
                         current_mask = self.mask_net(current_noisy)
-                        current_mask = (current_mask > 0.5).float()
-                        num_non_zero = torch.count_nonzero(current_mask)
-                        num_zero = current_mask.size()[0] * 256 * 256 - num_non_zero
-
                         aux_loss = torch.mean(torch.abs(current_noisy - current_noisy_rec) * current_mask)
                         optimizer.zero_grad()
                         aux_loss.backward()
