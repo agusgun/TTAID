@@ -1083,7 +1083,12 @@ class RealDenoiserMetaTransfer(BaseModel):
                 loss_meter.update(loss.item())
                 psnr_aa_meter.update(psnr_val, bs)
                 ssim_aa_meter.update(ssim_val, bs)
-                
+        
+                mask_saved_img = plot_image(
+                    mask.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "mask"),
+                    fname="{}.png".format(curr_it),
+                )
                 out_saved_img = plot_image(
                     out.data[0],
                     output_dir=os.path.join(self.args.output_dir, "out"),
@@ -1162,7 +1167,6 @@ class RealDenoiserMetaTransfer(BaseModel):
 
                 out = torch.ones_like(clean)
                 mask = torch.ones(size=(noisy.size()[0], 1, noisy.size()[2], noisy.size()[3]), dtype=out.dtype, device=out.device)
-
                 for iter_batch in range(noisy.size()[0]):
                     adapted_restoration_net = deepcopy(self.restoration_net)
                     adapted_restoration_net.train()
@@ -1200,15 +1204,23 @@ class RealDenoiserMetaTransfer(BaseModel):
                 ssim_val, _ = calculate_batch_ssim(clean, out_ba)
                 psnr_ba_meter.update(psnr_val, bs)
                 ssim_ba_meter.update(ssim_val, bs)
+                psnr_ba = psnr_val
+                ssim_ba = ssim_val
 
                 psnr_val, bs = calculate_batch_psnr(clean, out)
                 ssim_val, _ = calculate_batch_ssim(clean, out)
+                self.logger.info("Testing: curr_it: {} | PSNRBA: {} | SSIMBA: {} | PSNRAA: {} | SSIMAA: {}".format(curr_it, psnr_ba, ssim_ba, psnr_val, ssim_val))
 
                 loss = self.rec_criterion(out, clean)
                 loss_meter.update(loss.item())
                 psnr_aa_meter.update(psnr_val, bs)
                 ssim_aa_meter.update(ssim_val, bs)
 
+                mask_saved_img = plot_image(
+                    mask.data[0],
+                    output_dir=os.path.join(self.args.output_dir, "mask"),
+                    fname="{}.png".format(curr_it),
+                )
                 out_saved_img = plot_image(
                     out.data[0],
                     output_dir=os.path.join(self.args.output_dir, "out"),
@@ -1294,6 +1306,9 @@ class RealDenoiserMetaTransfer(BaseModel):
         self.summary_writer = SummaryWriter(
             log_dir=self.args.summary_dir, comment="RealDenoiser Base"
         )
+        Path(os.path.join(self.args.output_dir, "mask")).mkdir(
+            parents=True, exist_ok=True
+        )
         Path(os.path.join(self.args.output_dir, "noisy")).mkdir(
             parents=True, exist_ok=True
         )
@@ -1310,6 +1325,9 @@ class RealDenoiserMetaTransfer(BaseModel):
         """
         self.summary_writer = SummaryWriter(
             log_dir=self.args.summary_dir, comment="RealDenoiser Base"
+        )
+        Path(os.path.join(self.args.output_dir, "mask")).mkdir(
+            parents=True, exist_ok=True
         )
         Path(os.path.join(self.args.output_dir, "noisy")).mkdir(
             parents=True, exist_ok=True
