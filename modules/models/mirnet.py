@@ -368,6 +368,8 @@ class MIRNet(BaseModel):
                 psnr_meter.update(psnr_val, bs)
                 ssim_meter.update(ssim_val, bs)
 
+                self.logger.info("CURR IT: {} | PSNR: {} | SSIM: {}".format(curr_it, psnr_val, ssim_val))
+
                 tqdm_batch.set_description(
                     "({batch}/{size}) | PSNR: {psnr:.4f} | SSIM: {ssim:.4f}".format(
                         batch=curr_it + 1,
