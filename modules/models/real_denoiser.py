@@ -644,7 +644,7 @@ class RealDenoiserBase(BaseModel):
         Return the number of parameters for the model
         """
         num_params_restoration = sum(
-            p.numel() for p in self.restoration_net.parameters() if p.requires_grad
+            p.numel() for n, p in self.restoration_net.named_parameters() if p.requires_grad and 'head' in n
         )
         num_params_mask = sum(
             p.numel() for p in self.mask_net.parameters() if p.requires_grad
@@ -1361,7 +1361,7 @@ class RealDenoiserMetaTransfer(BaseModel):
         Return the number of parameters for the model
         """
         num_params_restoration = sum(
-            p.numel() for p in self.restoration_net.parameters() if p.requires_grad
+            p.numel() for n, p in self.restoration_net.named_parameters() if p.requires_grad and 'head' in n
         )
         num_params_mask = sum(
             p.numel() for p in self.mask_net.parameters() if p.requires_grad
